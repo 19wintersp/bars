@@ -7,6 +7,9 @@ use bars_protocol::Patch;
 
 use anyhow::{bail, Result};
 
+use ::bincode::config::{legacy, Configuration, Fixint, LittleEndian};
+use bincode::serde as bincode;
+
 use serde::{Deserialize, Serialize};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -16,6 +19,8 @@ use tokio::sync::mpsc::error::TryRecvError;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
 use tracing::trace;
+
+const BINCODE_CONFIG: Configuration<LittleEndian, Fixint> = legacy();
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum Upstream {
@@ -121,9 +126,9 @@ impl Channel {
 				tx.send(message)?;
 			},
 			Self::Tcp(stream) => {
-				let n = bincode::serialized_size(&message)? as u32;
-				stream.write_all(&n.to_le_bytes())?;
-				bincode::serialize_into(stream, &message)?;
+				let data = bincode::encode_to_vec(&message, BINCODE_CONFIG)?;
+				stream.write_all(&(data.len() as u32).to_le_bytes())?;
+				stream.write_all(&data)?;
 			},
 		}
 
@@ -149,7 +154,7 @@ impl Channel {
 					Err(err) => return Err(err.into()),
 				}
 
-				let message = bincode::deserialize_from(stream)?;
+				let message = bincode::decode_from_std_read(stream, BINCODE_CONFIG)?;
 				trace!("cch rx: {:?}", HideConfig(&message));
 				Ok(Some(message))
 			},
@@ -185,7 +190,7 @@ impl ServerChannel {
 		tx: &mut T,
 		message: Downstream,
 	) -> Result<()> {
-		let data = bincode::serialize(&message)?;
+		let data = bincode::encode_to_vec(&message, BINCODE_CONFIG)?;
 		tx.write_all(&data).await?;
 		Ok(())
 	}
@@ -214,7 +219,7 @@ impl ServerChannel {
 		} else {
 			let mut buf = vec![0; n as usize];
 			rx.read_exact(&mut buf).await?;
-			Ok(bincode::deserialize(&buf)?)
+			Ok(bincode::decode_from_slice(&buf, BINCODE_CONFIG)?.0)
 		}
 	}
 
