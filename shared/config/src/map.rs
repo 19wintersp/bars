@@ -1,9 +1,9 @@
 use super::*;
 
-#[derive(Clone, Debug, Decode, Encode)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Decode, Encode)]
 pub struct Style {
 	pub stroke_style: StrokeStyle,
-	pub stroke_width: f32,
+	pub stroke_width: StrokeWidth,
 	pub stroke_cap: StrokeCap,
 	pub stroke_join: StrokeJoin,
 	pub stroke_color: Color,
@@ -39,6 +39,21 @@ impl Default for Color {
 pub enum StrokeStyle {
 	None,
 	Dash(i32),
+}
+
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Decode, Encode)]
+pub struct StrokeWidth(u8);
+
+impl From<StrokeWidth> for f32 {
+	fn from(from: StrokeWidth) -> Self {
+		from.0 as f32 / 8.0
+	}
+}
+
+impl From<f32> for StrokeWidth {
+	fn from(from: f32) -> Self {
+		Self((8.0 * from).clamp(0.0, 255.0).round() as u8)
+	}
 }
 
 #[derive(
