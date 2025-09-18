@@ -316,6 +316,7 @@ struct AerodromeManager {
 	server: Option<(String, String)>,
 	icao: String,
 	broadcast: Sender<Downstream>,
+	config_manager: Arc<Mutex<ConfigManager>>,
 }
 
 struct AerodromeManagerData {
@@ -330,7 +331,7 @@ impl AerodromeManager {
 	async fn new(
 		icao: &str,
 		options: &Option<ConnectOptions>,
-		config: Arc<Mutex<ConfigManager>>,
+		config_manager: Arc<Mutex<ConfigManager>>,
 		broadcast: Sender<Downstream>,
 	) -> Result<Self> {
 		let this = Self {
@@ -365,22 +366,13 @@ impl AerodromeManager {
 			}),
 			icao: icao.into(),
 			broadcast: broadcast.clone(),
+			config_manager,
 		};
 
 		{
-			let icao = icao.to_string();
 			let this = this.clone();
 			tokio::spawn(async move {
-				match config.lock().await.load(&icao).await {
-					Ok(None) => (),
-					Ok(Some(config)) => {
-						{
-							this.data.lock().await.config = Some(config);
-						}
-						this.sync_clients().await;
-					},
-					Err(err) => warn!("failed to load config: {err}"),
-				}
+				this.load_config().await
 			});
 		}
 
@@ -390,6 +382,38 @@ impl AerodromeManager {
 	fn broadcast(&self, message: Downstream) {
 		if self.broadcast.send(message).is_err() {
 			warn!("broadcast channel full");
+		}
+	}
+
+	async fn load_config(&self) -> Result<()> {
+		if self.data.lock().await.config.is_some() {
+			debug!("skipping config load");
+			Ok(())
+		} else {
+			match self.config_manager.lock().await.load(&self.icao).await {
+				Ok(None) => Ok(()),
+				Ok(Some(loaded)) => {
+					let sync = {
+						let config = &mut self.data.lock().await.config;
+						if config.is_none() {
+							*config = Some(loaded);
+							true
+						} else {
+							false
+						}
+					};
+
+					if sync {
+						self.sync_clients().await;
+					}
+
+					Ok(())
+				},
+				Err(err) => {
+					warn!("failed to load config: {err}");
+					Err(err)
+				},
+			}
 		}
 	}
 
@@ -411,6 +435,8 @@ impl AerodromeManager {
 	}
 
 	async fn connect(&self) -> Result<()> {
+		self.load_config().await?;
+
 		let mut data = self.data.lock().await;
 
 		if data.socket.is_some() {
