@@ -242,7 +242,8 @@ impl Worker {
 				while let Ok(message) = ipc_rx.recv().await {
 					let mut tracked = tracked.lock().await;
 
-					if !tracked.contains(message.icao()) {
+					let icao = message.icao();
+					if !tracked.contains(&icao.into_owned()) {
 						continue
 					}
 
@@ -371,9 +372,7 @@ impl AerodromeManager {
 
 		{
 			let this = this.clone();
-			tokio::spawn(async move {
-				this.load_config().await
-			});
+			tokio::spawn(async move { this.load_config().await });
 		}
 
 		Ok(this)
@@ -421,7 +420,7 @@ impl AerodromeManager {
 		let data = self.data.lock().await;
 		if let Some(config) = &data.config {
 			self.broadcast(Downstream::Config {
-				data: config.clone(),
+				data: config.encode().unwrap(),
 			});
 			self.broadcast(Downstream::Control {
 				icao: self.icao.clone(),

@@ -6,8 +6,9 @@ use std::fmt::Debug;
 use std::time::{Duration, Instant};
 
 use bars_config::{
-	BlockDisplay, BlockState, Color, EdgeCondition, EdgeDisplay, FillStyle, Geo,
-	GeoPoint, NodeCondition, NodeDisplay, Path, Point,
+	BlockDisplay, BlockState, Color, EdgeCondition, EdgeDisplay, EdgeState,
+	FillStyle, Geo, GeoPoint, Map, NodeCondition, NodeDisplay, NodeState, Path,
+	Point, Projectable, StrokeCap, StrokeJoin, StrokeStyle, View,
 };
 
 use tracing::{trace, warn};
@@ -39,33 +40,37 @@ impl Style {
 			)
 		}
 
-		let brush = if style.fill_style == FillStyle::None {
-			HBRUSH(Gdi::GetStockObject(Gdi::NULL_BRUSH).0)
-		} else if style.fill_style == FillStyle::Solid {
-			Gdi::CreateSolidBrush(color(style.fill_color))
-		} else {
-			Gdi::CreateHatchBrush(
-				match style.fill_style {
-					FillStyle::None | FillStyle::Solid => unreachable!(),
-					FillStyle::HatchHorizontal => Gdi::HS_HORIZONTAL,
-					FillStyle::HatchVertical => Gdi::HS_VERTICAL,
-					FillStyle::HatchForwardDiagonal => Gdi::HS_FDIAGONAL,
-					FillStyle::HatchBackwardDiagonal => Gdi::HS_BDIAGONAL,
-					FillStyle::HatchCross => Gdi::HS_CROSS,
-					FillStyle::HatchDiagonalCross => Gdi::HS_DIAGCROSS,
+		let brush = match style.fill_style {
+			FillStyle::None => HBRUSH(Gdi::GetStockObject(Gdi::NULL_BRUSH).0),
+			FillStyle::Fill => Gdi::CreateSolidBrush(color(style.fill_color)),
+			FillStyle::Hatch(hatch) => Gdi::CreateHatchBrush(
+				match hatch {
+					0 => Gdi::HS_HORIZONTAL,
+					1 => Gdi::HS_VERTICAL,
+					2 => Gdi::HS_FDIAGONAL,
+					3 => Gdi::HS_BDIAGONAL,
+					4 => Gdi::HS_CROSS,
+					5 => Gdi::HS_DIAGCROSS,
+					_ => Gdi::HS_FDIAGONAL,
 				},
 				color(style.fill_color),
-			)
+			),
 		};
 
-		let pen = if style.stroke_width > 0.0 {
-			Gdi::CreatePen(
-				Gdi::PS_SOLID,
-				style.stroke_width.ceil() as i32,
+		let pen = match style.stroke_style {
+			StrokeStyle::None => HPEN(Gdi::GetStockObject(Gdi::NULL_PEN).0),
+			StrokeStyle::Dash(dash) => Gdi::CreatePen(
+				match dash {
+					0 => Gdi::PS_SOLID,
+					1 => Gdi::PS_DASH,
+					2 => Gdi::PS_DOT,
+					3 => Gdi::PS_DASHDOT,
+					4 => Gdi::PS_DASHDOTDOT,
+					_ => Gdi::PS_SOLID,
+				},
+				f32::from(style.stroke_width).ceil() as i32,
 				color(style.stroke_color),
-			)
-		} else {
-			HPEN(Gdi::GetStockObject(Gdi::NULL_PEN).0)
+			),
 		};
 
 		Self {
@@ -241,9 +246,9 @@ impl Screen<'_> {
 			.map(|aerodrome| {
 				aerodrome
 					.config()
-					.views
+					.maps
 					.iter()
-					.map(|view| view.name.clone())
+					.flat_map(|map| map.views.iter().map(|view| view.name.clone()))
 					.collect()
 			})
 			.unwrap_or(Vec::new())
@@ -258,6 +263,16 @@ impl Screen<'_> {
 			*view = i;
 			self.refresh_required = true;
 		}
+	}
+
+	fn current_view(&self) -> Option<(&Map, &View)> {
+		self.view.zip(self.data()).and_then(|(view, aerodrome)| {
+			let mut ci = 0;
+			aerodrome.config().maps.iter().find_map(|map| {
+				ci += map.views.len();
+				(ci > view).then(|| (map, &map.views[view + ci - map.views.len()]))
+			})
+		})
 	}
 
 	pub fn is_pilot_enabled(&self, callsign: &str) -> bool {
@@ -292,11 +307,11 @@ impl Screen<'_> {
 		hdc: HDC,
 		path: &Path<T>,
 	) {
-		if path.style >= self.styles.len() {
+		if path.style.0 >= self.styles.len() {
 			return
 		}
 
-		let style = &self.styles[path.style];
+		let style = &self.styles[path.style.0];
 		style.apply(hdc);
 
 		let points = path
@@ -333,8 +348,10 @@ impl Screen<'_> {
 		}
 
 		for (i, block) in blocks.enumerate() {
-			let points = self.project_points(&block.target.points);
-			targets.add_poly(Target::Block(i as u16), &points);
+			for polygon in &block.target.polygons {
+				let points = self.project_points(polygon);
+				targets.add_poly(Target::Block(i as u16), &points);
+			}
 		}
 
 		let Some(aerodrome) = self.data() else { return };
@@ -342,8 +359,10 @@ impl Screen<'_> {
 
 		for (i, node) in nodes.enumerate() {
 			if !matches!(profile.nodes[i], NodeCondition::Fixed { .. }) {
-				let points = self.project_points(&node.target.points);
-				targets.add_poly(Target::Node(i as u16), &points);
+				for polygon in &node.target.polygons {
+					let points = self.project_points(polygon);
+					targets.add_poly(Target::Node(i as u16), &points);
+				}
 			}
 		}
 	}
@@ -378,12 +397,14 @@ impl Screen<'_> {
 
 		let Some(aerodrome) = self.data() else { return };
 
-		self.setup_targets(
-			viewport.size,
-			aerodrome.config().nodes.iter().map(|node| &node.display),
-			aerodrome.config().blocks.iter().map(|block| &block.display),
-			&mut targets,
-		);
+		if let Some(map) = &aerodrome.config().geo_map {
+			self.setup_targets(
+				viewport.size,
+				map.nodes.iter(),
+				map.blocks.iter(),
+				&mut targets,
+			);
+		}
 
 		// this isn't very good
 
@@ -465,39 +486,32 @@ impl Screen<'_> {
 
 		let mut targets = self.targets.take().unwrap_or_default();
 
-		let Some(aerodrome) = self.data() else { return };
-		let Some(view) = aerodrome.config().views.get(self.view.unwrap()) else {
+		let Some((map, view)) = self.current_view() else {
 			return
 		};
 
 		self.setup_targets(
 			viewport.size,
-			aerodrome.config().maps[view.map]
-				.nodes
-				.iter()
-				.map(|node| node),
-			aerodrome.config().maps[view.map]
-				.blocks
-				.iter()
-				.map(|block| block),
+			map.nodes.iter().map(|node| node),
+			map.blocks.iter().map(|block| block),
 			&mut targets,
 		);
 
 		self.transform = Transform::new_view(viewport, view.bounds);
 		self.targets = Some(targets);
 
-		let Some(aerodrome) = self.data() else { return };
-		let Some(view) = aerodrome.config().views.get(self.view.unwrap()) else {
+		let Some((map, _)) = self.current_view() else {
 			return
 		};
 
-		let map = &aerodrome.config().maps[view.map];
-
 		unsafe {
 			Style::new(&bars_config::Style {
-				stroke_width: 0.0,
+				stroke_style: StrokeStyle::None,
+				stroke_width: (0.0).into(),
 				stroke_color: Color::default(),
-				fill_style: FillStyle::Solid,
+				stroke_cap: StrokeCap(0),
+				stroke_join: StrokeJoin(0),
+				fill_style: FillStyle::Fill,
 				fill_color: map.background,
 			})
 			.apply(hdc);
@@ -527,8 +541,9 @@ impl Screen<'_> {
 		hdc: HDC,
 	) {
 		for (i, edge) in edges.enumerate() {
-			if let EdgeCondition::Fixed { state: false } =
-				aerodrome.config().profiles[self.profile()].edges[i]
+			if let EdgeCondition::Fixed {
+				state: EdgeState::Off,
+			} = aerodrome.config().profiles[self.profile()].edges[i]
 			{
 				continue
 			}
@@ -552,8 +567,9 @@ impl Screen<'_> {
 			}
 
 			if aerodrome.config().profiles[self.profile()].nodes[i]
-				== (NodeCondition::Fixed { state: false })
-			{
+				== (NodeCondition::Fixed {
+					state: NodeState::Off,
+				}) {
 				continue
 			}
 
@@ -586,17 +602,10 @@ impl Screen<'_> {
 
 		let Some(aerodrome) = self.data() else { return };
 
-		if let Some(view) = self.view {
-			let map = &aerodrome.config().maps[aerodrome.config().views[view].map];
-
+		if let Some((map, _)) = self.current_view() {
 			self.draw_items(aerodrome, map.nodes.iter(), map.edges.iter(), hdc);
-		} else {
-			self.draw_items(
-				aerodrome,
-				aerodrome.config().nodes.iter().map(|node| &node.display),
-				aerodrome.config().edges.iter().map(|edge| &edge.display),
-				hdc,
-			);
+		} else if let Some(map) = &aerodrome.config().geo_map {
+			self.draw_items(aerodrome, map.nodes.iter(), map.edges.iter(), hdc);
 		}
 
 		if instant_start.elapsed() > Duration::from_millis(1) {
@@ -609,11 +618,10 @@ impl Screen<'_> {
 	}
 
 	pub fn set_viewport_non_geo(&mut self, viewport: ViewportNonGeo) {
-		let Some(aerodrome) = self.data() else { return };
-		let Some(view) = self.view else { return };
-
-		let bounds = aerodrome.config().views[view].bounds;
-		self.transform = Transform::new_view(viewport, bounds);
+		let Some((_, view)) = self.current_view() else {
+			return
+		};
+		self.transform = Transform::new_view(viewport, view.bounds);
 	}
 
 	pub fn click_regions(&self) -> &[RECT] {
@@ -653,7 +661,7 @@ impl Screen<'_> {
 						NodeCondition::Direct { .. } => {
 							data.set_node(id as usize, !data.node_state(id as usize));
 						},
-						NodeCondition::Router => {
+						NodeCondition::Router { .. } => {
 							if let Some((node, at)) = selection {
 								if at.elapsed() < DESELECT_AFTER {
 									data.set_route((node, id as usize));
@@ -781,7 +789,7 @@ impl Transform {
 	}
 }
 
-trait Transformable {
+trait Transformable: Projectable {
 	fn transform(&self, transform: &Transform) -> (f64, f64);
 }
 

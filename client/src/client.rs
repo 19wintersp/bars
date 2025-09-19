@@ -5,8 +5,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
 
 use bars_config::{
-	BlockCondition, BlockState, EdgeCondition, ElementCondition, NodeCondition,
-	ResetCondition,
+	BlockCondition, BlockRoute, BlockState, EdgeCondition, EdgeState,
+	ElementCondition, NodeCondition, NodeState, ResetCondition,
 };
 
 use bars_protocol::{BlockState as IpcBlockState, Patch};
@@ -38,10 +38,12 @@ impl Client {
 		while let Some(message) = self.channel.recv()? {
 			match message {
 				Downstream::Config { data } => {
+					let aerodrome = bars_config::Aerodrome::decode(&data)?;
+
 					self
 						.aerodromes
-						.entry(data.icao.clone())
-						.or_insert_with(|| Aerodrome::new(data));
+						.entry(aerodrome.icao.clone())
+						.or_insert_with(|| Aerodrome::new(aerodrome));
 				},
 				Downstream::Control { icao, control } => {
 					if let Some(aerodrome) = self.aerodromes.get_mut(&icao) {
@@ -201,7 +203,7 @@ impl Aerodrome {
 			this.node_ids.insert(node.id.clone(), i);
 
 			if let Some(parent) = node.parent {
-				this.children.entry(parent).or_default().push(i);
+				this.children.entry(parent.0).or_default().push(i);
 			}
 		}
 
@@ -212,22 +214,27 @@ impl Aerodrome {
 				.nodes
 				.iter()
 				.copied()
-				.map(|node| (node, borders[node] > 0))
+				.map(|node| (node, borders[node.0] > 0))
 				.collect::<Vec<_>>();
 
 			for node in block.nodes.iter().copied() {
-				let node_borders = &mut borders[node];
+				let node_borders = &mut borders[node.0];
 
-				this.node_blocks[node][1] = i;
-				this.node_blocks[node][*node_borders] = i;
+				this.node_blocks[node.0][1] = i;
+				this.node_blocks[node.0][*node_borders] = i;
 
-				this.node_conns[node][*node_borders].extend(conns.iter().filter(
-					|(node_, _)| {
-						*node_ != node
-							&& !block.non_routes.contains(&(*node_, node))
-							&& !block.non_routes.contains(&(node, *node_))
-					},
-				));
+				this.node_conns[node.0][*node_borders].extend(
+					conns
+						.iter()
+						.filter(|(node_, _)| {
+							node_.0 != node.0
+								&& !block.non_routes.contains(&BlockRoute {
+									from: node,
+									to: *node_,
+								})
+						})
+						.map(|(node, side)| (node.0, *side)),
+				);
 
 				*node_borders += 1;
 			}
@@ -243,8 +250,8 @@ impl Aerodrome {
 		for (i, element) in this.config.elements.iter().enumerate() {
 			match element.condition {
 				ElementCondition::Fixed(_) => (),
-				ElementCondition::Node(node) => this.node_dependencies[node].push(i),
-				ElementCondition::Edge(edge) => this.edge_dependencies[edge].push(i),
+				ElementCondition::Node(node) => this.node_dependencies[node.0].push(i),
+				ElementCondition::Edge(edge) => this.edge_dependencies[edge.0].push(i),
 			}
 		}
 
@@ -257,9 +264,10 @@ impl Aerodrome {
 		Some(match state {
 			IpcBlockState::Clear => BlockState::Clear,
 			IpcBlockState::Relax => BlockState::Relax,
-			IpcBlockState::Route((a, b)) => {
-				BlockState::Route((*self.node_ids.get(&a)?, *self.node_ids.get(&b)?))
-			},
+			IpcBlockState::Route((a, b)) => BlockState::Route((
+				(*self.node_ids.get(&a)?).into(),
+				(*self.node_ids.get(&b)?).into(),
+			)),
 		})
 	}
 
@@ -268,8 +276,8 @@ impl Aerodrome {
 			BlockState::Clear => IpcBlockState::Clear,
 			BlockState::Relax => IpcBlockState::Relax,
 			BlockState::Route((a, b)) => IpcBlockState::Route((
-				self.config.nodes[*a].id.clone(),
-				self.config.nodes[*b].id.clone(),
+				self.config.nodes[a.0].id.clone(),
+				self.config.nodes[b.0].id.clone(),
 			)),
 		}
 	}
@@ -341,8 +349,8 @@ impl Aerodrome {
 					element.id.clone(),
 					match element.condition {
 						ElementCondition::Fixed(state) => state,
-						ElementCondition::Edge(edge) => next_edges[edge],
-						ElementCondition::Node(node) => *self.nodes[node].state(),
+						ElementCondition::Edge(edge) => next_edges[edge.0],
+						ElementCondition::Node(node) => *self.nodes[node.0].state(),
 					},
 				);
 			}
@@ -391,7 +399,7 @@ impl Aerodrome {
 		for i in 0..self.config.nodes.len() {
 			self.nodes.push(State {
 				current: match self.config.profiles[self.profile].nodes[i] {
-					NodeCondition::Fixed { state } => state,
+					NodeCondition::Fixed { state } => state == NodeState::On,
 					NodeCondition::Direct { reset } => reset != ResetCondition::None,
 					_ => true,
 				},
@@ -490,41 +498,25 @@ impl Aerodrome {
 		let mut blocks = HashMap::new();
 
 		for (node, state) in &preset.nodes {
-			if (*node as u32) < u32::MAX {
-				self.nodes[*node].pending = Some(*state);
-				nodes.insert(self.config.nodes[*node].id.clone(), *state);
-			} else {
-				for node in 0..self.nodes.len() {
-					if !nodes.contains_key(&self.config.nodes[node].id) {
-						self.nodes[node].pending = Some(*state);
-						nodes.insert(self.config.nodes[node].id.clone(), *state);
-					}
-				}
+			if node.0 < self.nodes.len() {
+				let state = *state == NodeState::On;
+				self.nodes[node.0].pending = Some(state);
+				nodes.insert(self.config.nodes[node.0].id.clone(), state);
 			}
 		}
 
 		for (block, state) in &preset.blocks {
-			if (*block as u32) < u32::MAX {
-				self.blocks[*block].pending = Some(*state);
+			if block.0 < self.blocks.len() {
+				self.blocks[block.0].pending = Some(*state);
 				blocks.insert(
-					self.config.blocks[*block].id.clone(),
+					self.config.blocks[block.0].id.clone(),
 					self.bs_conf_to_ipc(state),
 				);
-			} else {
-				for block in 0..self.blocks.len() {
-					if !blocks.contains_key(&self.config.blocks[block].id) {
-						self.blocks[block].pending = Some(*state);
-						blocks.insert(
-							self.config.blocks[block].id.clone(),
-							self.bs_conf_to_ipc(state),
-						);
-					}
-				}
 			}
 		}
 
 		self.pending_patch.nodes = nodes;
-		self.pending_nodes = preset.nodes.iter().map(|(i, _)| *i).collect();
+		self.pending_nodes = preset.nodes.iter().map(|(i, _)| i.0).collect();
 		self.pending_patch.blocks = blocks;
 
 		self.node_timers.clear();
@@ -541,16 +533,16 @@ impl Aerodrome {
 
 	pub fn node_state(&self, node: usize) -> bool {
 		match self.config.profiles[self.profile].nodes[node] {
-			NodeCondition::Fixed { state } => state,
+			NodeCondition::Fixed { state } => state == NodeState::On,
 			NodeCondition::Direct { .. } => *self.nodes[node].state(),
-			NodeCondition::Router => {
+			NodeCondition::Router { .. } => {
 				let blocks = &self.node_blocks[node];
 				blocks
 					.iter()
 					.any(|block| match self.blocks[*block].state() {
 						BlockState::Clear => true,
 						BlockState::Relax => false,
-						BlockState::Route((a, b)) => *a != node && *b != node,
+						BlockState::Route((a, b)) => a.0 != node && b.0 != node,
 					})
 			},
 		}
@@ -560,6 +552,7 @@ impl Aerodrome {
 		let BlockState::Route((ap, bp)) = *self.blocks[block].state() else {
 			return vec![]
 		};
+		let (ap, bp) = (ap.0, bp.0);
 
 		let mut routes = Vec::new();
 
@@ -572,7 +565,10 @@ impl Aerodrome {
 
 		for a in ac.iter().copied() {
 			for b in bc.iter().copied() {
-				if !non_routes.contains(&(a, b)) && !non_routes.contains(&(b, a)) {
+				if !non_routes.contains(&BlockRoute {
+					from: a.into(),
+					to: b.into(),
+				}) {
 					routes.push((a, b));
 				}
 			}
@@ -582,20 +578,33 @@ impl Aerodrome {
 	}
 
 	pub fn edge_state(&self, edge: usize) -> bool {
-		match self.config.profiles[self.profile].edges[edge] {
-			EdgeCondition::Fixed { state } => state,
-			EdgeCondition::Direct { node } => !self.node_state(node),
+		match &self.config.profiles[self.profile].edges[edge] {
+			EdgeCondition::Fixed { state } => *state == EdgeState::On,
+			EdgeCondition::Direct { nodes } => {
+				nodes.evaluate(&|node| {
+					if self.node_state(node.0) {
+						NodeState::On
+					} else {
+						NodeState::Off
+					}
+				}) == EdgeState::On
+			},
 			EdgeCondition::Router { block, ref routes } => {
-				match *self.blocks[block].state() {
+				match *self.blocks[block.0].state() {
 					BlockState::Clear => false,
 					BlockState::Relax => true,
 					BlockState::Route((ap, bp)) => {
-						let cands = self.route_candidates(block);
+						let (ap, bp) = (ap.0, bp.0);
+
+						let cands = self.route_candidates(block.0);
 						match cands.len() {
 							0 => return false,
 							1 => {
 								let (a, b) = cands[0];
-								return routes.contains(&(a, b)) || routes.contains(&(b, a))
+								return routes.contains(&BlockRoute {
+									from: a.into(),
+									to: b.into(),
+								})
 							},
 							_ => (),
 						}
@@ -605,13 +614,13 @@ impl Aerodrome {
 
 						let mut matches = (HashSet::new(), HashSet::new());
 
-						let ao = vec![ap];
-						let ac = self.children.get(&ap).unwrap_or(&ao);
-						for (a, b) in routes.iter().copied() {
-							let (a, b) = if ac.contains(&a) { (a, b) } else { (b, a) };
+						//let ao = vec![ap];
+						//let ac = self.children.get(&ap).unwrap_or(&ao);
+						for BlockRoute { from: a, to: b } in routes.iter().copied() {
+							//let (a, b) = if ac.contains(&a) { (a, b) } else { (b, a) };
 
-							matches.0.insert(a);
-							matches.1.insert(b);
+							matches.0.insert(a.0);
+							matches.1.insert(b.0);
 						}
 
 						let mut cands = (
@@ -621,7 +630,7 @@ impl Aerodrome {
 
 						for (parent, cands) in [(ap, &mut cands.0), (bp, &mut cands.1)] {
 							let [b1, b2] = self.node_blocks[parent];
-							let adjacent = if b1 != block { b1 } else { b2 };
+							let adjacent = if b1 != block.0 { b1 } else { b2 };
 
 							match *self.blocks[adjacent].state() {
 								BlockState::Clear => (),
@@ -629,9 +638,9 @@ impl Aerodrome {
 								BlockState::Route((a, b)) => {
 									let points = self.route_candidates(adjacent).into_iter();
 
-									if a == parent {
+									if a.0 == parent {
 										*cands = HashSet::from_iter(points.map(|r| r.0));
-									} else if b == parent {
+									} else if b.0 == parent {
 										*cands = HashSet::from_iter(points.map(|r| r.1));
 									}
 								},
@@ -665,20 +674,29 @@ impl Aerodrome {
 					.nodes
 					.iter()
 					.filter(|node| {
-						self.config.profiles[self.profile].nodes[**node]
-							== NodeCondition::Fixed { state: false }
+						self.config.profiles[self.profile].nodes[node.0]
+							== NodeCondition::Fixed {
+								state: NodeState::Off,
+							}
 					})
-					.flat_map(|node| self.node_blocks[*node]),
+					.flat_map(|node| self.node_blocks[node.0]),
 			);
 		}
 	}
 
 	pub fn set_route(&mut self, (orgn, dest): (usize, usize)) {
-		if self.config.profiles[self.profile].nodes[orgn] != NodeCondition::Router
-			|| self.config.profiles[self.profile].nodes[dest] != NodeCondition::Router
-		{
+		if !matches!(
+			self.config.profiles[self.profile].nodes[orgn],
+			NodeCondition::Router { .. }
+		) || !matches!(
+			self.config.profiles[self.profile].nodes[dest],
+			NodeCondition::Router { .. }
+		) {
 			return
 		}
+
+		// todo: if orgn/dest are in same block, and the same route is currently
+		// selected, clear the block.
 
 		let mut nodes = VecDeque::from([(orgn, false, 0), (orgn, true, 0)]);
 		let mut visited = HashSet::from([(orgn, false), (orgn, true)]);
@@ -688,11 +706,17 @@ impl Aerodrome {
 
 		while let Some((node, direction, distance)) = nodes.pop_front() {
 			let condition = self.config.profiles[self.profile].nodes[node];
-			if condition == (NodeCondition::Fixed { state: true }) {
+			if condition
+				== (NodeCondition::Fixed {
+					state: NodeState::On,
+				}) {
 				continue
 			}
 
-			let transparent = condition == NodeCondition::Fixed { state: false };
+			let transparent = condition
+				== NodeCondition::Fixed {
+					state: NodeState::Off,
+				};
 
 			if node == dest {
 				if list.is_none() {
@@ -755,7 +779,10 @@ impl Aerodrome {
 				};
 
 				let block = self.node_blocks[*node1][*direction1 as usize];
-				self.set_block_state(block, BlockState::Route((*node1, *node2)));
+				self.set_block_state(
+					block,
+					BlockState::Route(((*node1).into(), (*node2).into())),
+				);
 			}
 		}
 	}

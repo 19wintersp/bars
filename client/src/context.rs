@@ -308,7 +308,7 @@ impl Context {
 		self.messages.push_back(message)
 	}
 
-	pub fn create_screen(&mut self, geo: bool) -> Screen {
+	pub fn create_screen(&mut self, geo: bool) -> Screen<'_> {
 		Screen::new(self, geo)
 	}
 

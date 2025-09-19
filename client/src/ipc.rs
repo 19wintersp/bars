@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt::{self, Debug, Formatter};
 use std::io::{ErrorKind, Write};
@@ -58,7 +59,7 @@ impl Upstream {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum Downstream {
 	Config {
-		data: bars_config::Aerodrome,
+		data: Vec<u8>,
 	},
 	Control {
 		icao: String,
@@ -80,13 +81,15 @@ pub enum Downstream {
 }
 
 impl Downstream {
-	pub fn icao(&self) -> &String {
+	pub fn icao(&self) -> Cow<'_, str> {
 		match self {
-			Self::Config { data } => &data.icao,
-			Self::Control { icao, .. } => icao,
-			Self::Patch { icao, .. } => icao,
-			Self::Aircraft { icao, .. } => icao,
-			Self::Error { icao, .. } => icao,
+			Self::Config { data } => bars_config::Aerodrome::decode(&data)
+				.map(|aerodrome| Cow::Owned(aerodrome.icao))
+				.unwrap_or(Cow::Borrowed("")),
+			Self::Control { icao, .. }
+			| Self::Patch { icao, .. }
+			| Self::Aircraft { icao, .. }
+			| Self::Error { icao, .. } => Cow::Borrowed(&icao),
 		}
 	}
 }
