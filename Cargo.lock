@@ -147,6 +147,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "bars-dump-config"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bars-config",
+]
+
+[[package]]
 name = "bars-protocol"
 version = "0.1.0"
 dependencies = [

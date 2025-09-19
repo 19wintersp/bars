@@ -4,6 +4,7 @@ members = [
 	"client/",
 	"shared/config/",
 	"shared/protocol/",
+	"tool/dump-config/",
 	"tool/server/",
 ]
 
