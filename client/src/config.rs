@@ -1,4 +1,4 @@
-use bars_config::{Aerodrome, Config};
+use bars_config::{Aerodrome, Config, Loadable};
 
 use std::path::{Path, PathBuf};
 

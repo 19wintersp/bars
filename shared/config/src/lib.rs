@@ -17,20 +17,13 @@ use flate2::Compression;
 pub use map::*;
 
 static MAGIC: &[u8] = b"\xffBARS\x13eu";
-const VERSION: u16 = 1;
 
 const BINCODE_CONFIG: BincodeConfig = bincode::config::standard();
 
-#[derive(Clone, Debug, Decode, Encode)]
-pub struct Config {
-	pub name: Option<String>,
-	pub version: Option<String>,
+pub trait Loadable: Decode<()> + Encode {
+	const VERSION: u16;
 
-	pub aerodromes: Vec<Aerodrome>,
-}
-
-impl Config {
-	pub fn load(mut reader: impl Read) -> Result<Self, DecodeError> {
+	fn load(mut reader: impl Read) -> Result<Self, DecodeError> {
 		fn bincode_error(error: IoError) -> DecodeError {
 			DecodeError::Io {
 				inner: error,
@@ -48,7 +41,7 @@ impl Config {
 		let mut buf = [0; 2];
 		reader.read_exact(&mut buf).map_err(bincode_error)?;
 
-		if buf != VERSION.to_be_bytes() {
+		if buf != Self::VERSION.to_be_bytes() {
 			return Err(DecodeError::Other("unsupported config version"))
 		}
 
@@ -56,7 +49,7 @@ impl Config {
 		bincode::decode_from_std_read(&mut reader, BINCODE_CONFIG)
 	}
 
-	pub fn save(&self, mut writer: impl Write) -> Result<(), EncodeError> {
+	fn save(&self, mut writer: impl Write) -> Result<(), EncodeError> {
 		fn bincode_error(error: IoError) -> EncodeError {
 			EncodeError::Io {
 				inner: error,
@@ -66,7 +59,7 @@ impl Config {
 
 		writer.write_all(&MAGIC).map_err(bincode_error)?;
 		writer
-			.write_all(&VERSION.to_be_bytes())
+			.write_all(&Self::VERSION.to_be_bytes())
 			.map_err(bincode_error)?;
 
 		let mut writer = DeflateEncoder::new(writer, Compression::best());
@@ -74,6 +67,18 @@ impl Config {
 
 		Ok(())
 	}
+}
+
+#[derive(Clone, Debug, Decode, Encode)]
+pub struct Config {
+	pub name: Option<String>,
+	pub version: Option<String>,
+
+	pub aerodromes: Vec<Aerodrome>,
+}
+
+impl Loadable for Config {
+	const VERSION: u16 = 0x0001;
 }
 
 #[derive(Clone, Debug, Decode, Encode)]
