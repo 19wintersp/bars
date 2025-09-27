@@ -1,6 +1,7 @@
 mod map;
 
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
 use std::io::{Error as IoError, Read, Write};
@@ -78,7 +79,7 @@ pub struct Config {
 }
 
 impl Loadable for Config {
-	const VERSION: u16 = 0x0001;
+	const VERSION: u16 = 0x0002;
 }
 
 #[derive(Clone, Debug, Decode, Encode)]
@@ -104,6 +105,38 @@ impl Aerodrome {
 
 	pub fn encode(&self) -> Result<Vec<u8>, EncodeError> {
 		bincode::encode_to_vec(self, BINCODE_CONFIG)
+	}
+
+	pub fn append_maps(&mut self, mut maps: Maps) {
+		let offset = self.styles.len();
+		self.styles.append(&mut maps.styles);
+
+		fn rebase<'a>(
+			source: Vec<String>,
+			target: impl Iterator<Item = &'a String>,
+		) -> Vec<Option<usize>> {
+			let map = source
+				.into_iter()
+				.enumerate()
+				.map(|(i, id)| (id, i))
+				.collect::<HashMap<_, _>>();
+			target.map(|id| map.get(id).copied()).collect()
+		}
+
+		let rebase = Rebase {
+			offset,
+			nodes: rebase(maps.nodes, self.nodes.iter().map(|node| &node.id)),
+			edges: rebase(maps.edges, self.edges.iter().map(|edge| &edge.id)),
+			blocks: rebase(maps.blocks, self.blocks.iter().map(|block| &block.id)),
+		};
+
+		if let Some(geo_map) = maps.geo_map {
+			self.geo_map = Some(geo_map.rebase(&rebase));
+		}
+
+		self
+			.maps
+			.extend(maps.maps.into_iter().map(|map| map.rebase(&rebase)));
 	}
 }
 
@@ -180,7 +213,9 @@ pub struct Node {
 }
 
 #[derive(Clone, Debug, Decode, Encode)]
-pub struct Edge;
+pub struct Edge {
+	pub id: String,
+}
 
 #[derive(Clone, Debug, Decode, Encode)]
 pub struct Block {
