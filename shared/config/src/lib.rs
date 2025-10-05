@@ -1,5 +1,5 @@
 mod map;
-#[cfg(any(true, feature = "topsky"))]
+#[cfg(feature = "topsky")]
 mod topsky;
 
 use std::cmp::Ordering;
