@@ -30,7 +30,8 @@ fn rebase_vec<T: Default>(
 	rebase
 		.iter()
 		.map(|i| {
-			i.map(|i| std::mem::take(&mut source[i]))
+			i.and_then(|i| source.get_mut(i))
+				.map(std::mem::take)
 				.unwrap_or_default()
 		})
 		.map(|mut t| {
@@ -44,7 +45,7 @@ fn offset_paths<T: Projectable>(paths: &mut [Path<T>], offset: usize) {
 	paths.iter_mut().for_each(|path| path.style.0 += offset);
 }
 
-#[derive(Clone, Debug, Decode, Encode)]
+#[derive(Clone, Debug, Default, Decode, Encode)]
 pub struct GeoMap {
 	pub nodes: Vec<NodeDisplay<GeoPoint>>,
 	pub edges: Vec<EdgeDisplay<GeoPoint>>,
@@ -67,7 +68,7 @@ impl GeoMap {
 	}
 }
 
-#[derive(Clone, Debug, Decode, Encode)]
+#[derive(Clone, Debug, Default, Decode, Encode)]
 pub struct Map {
 	pub background: Color,
 	pub base: Vec<Path<Point>>,

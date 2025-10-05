@@ -1,4 +1,6 @@
 mod map;
+#[cfg(any(true, feature = "topsky"))]
+mod topsky;
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
