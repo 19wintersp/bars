@@ -67,6 +67,7 @@ pub trait Loadable: Decode<()> + Encode {
 		writer
 			.write_all(&Self::VERSION.to_be_bytes())
 			.map_err(bincode_error)?;
+		writer.write_all(&[0; 6]).map_err(bincode_error)?;
 
 		let mut writer = DeflateEncoder::new(writer, Compression::best());
 		bincode::encode_into_std_write(self, &mut writer, BINCODE_CONFIG)?;
