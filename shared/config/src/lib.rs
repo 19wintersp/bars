@@ -1,9 +1,9 @@
+mod aerodrome;
 mod map;
 #[cfg(feature = "topsky")]
 mod topsky;
 
 use std::cmp::Ordering;
-use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
 use std::io::{Error as IoError, Read, Write};
@@ -17,7 +17,10 @@ use flate2::read::DeflateDecoder;
 use flate2::write::DeflateEncoder;
 use flate2::Compression;
 
+pub use aerodrome::*;
 pub use map::*;
+#[cfg(feature = "topsky")]
+pub use topsky::*;
 
 static MAGIC: &[u8] = b"\xffBARS\x13eu";
 
@@ -41,10 +44,10 @@ pub trait Loadable: Decode<()> + Encode {
 			return Err(DecodeError::Other("invalid config file"))
 		}
 
-		let mut buf = [0; 2];
+		let mut buf = [0; 8];
 		reader.read_exact(&mut buf).map_err(bincode_error)?;
 
-		if buf != Self::VERSION.to_be_bytes() {
+		if buf[..2] != Self::VERSION.to_be_bytes() {
 			return Err(DecodeError::Other("unsupported config version"))
 		}
 
@@ -72,74 +75,20 @@ pub trait Loadable: Decode<()> + Encode {
 	}
 }
 
+/// A bundle of aerodrome configurations and maps.
 #[derive(Clone, Debug, Decode, Encode)]
 pub struct Config {
 	pub name: Option<String>,
 	pub version: Option<String>,
 
-	pub aerodromes: Vec<Aerodrome>,
+	/// Aerodrome configurations, listed with corresponding aerodrome ICAO.
+	pub aerodromes: Vec<(String, Aerodrome)>,
+	/// Maps, listed with corresponding aerodrome ICAO.
+	pub maps: Vec<(String, Maps)>,
 }
 
 impl Loadable for Config {
-	const VERSION: u16 = 0x0002;
-}
-
-#[derive(Clone, Debug, Decode, Encode)]
-pub struct Aerodrome {
-	pub icao: String,
-
-	pub elements: Vec<Element>,
-	pub nodes: Vec<Node>,
-	pub edges: Vec<Edge>,
-	pub blocks: Vec<Block>,
-
-	pub profiles: Vec<Profile>,
-
-	pub geo_map: Option<GeoMap>,
-	pub maps: Vec<Map>,
-	pub styles: Vec<Style>,
-}
-
-impl Aerodrome {
-	pub fn decode(serialised: &[u8]) -> Result<Self, DecodeError> {
-		Ok(bincode::decode_from_slice(serialised, BINCODE_CONFIG)?.0)
-	}
-
-	pub fn encode(&self) -> Result<Vec<u8>, EncodeError> {
-		bincode::encode_to_vec(self, BINCODE_CONFIG)
-	}
-
-	pub fn append_maps(&mut self, mut maps: Maps) {
-		let offset = self.styles.len();
-		self.styles.append(&mut maps.styles);
-
-		fn rebase<'a>(
-			source: Vec<String>,
-			target: impl Iterator<Item = &'a String>,
-		) -> Vec<Option<usize>> {
-			let map = source
-				.into_iter()
-				.enumerate()
-				.map(|(i, id)| (id, i))
-				.collect::<HashMap<_, _>>();
-			target.map(|id| map.get(id).copied()).collect()
-		}
-
-		let rebase = Rebase {
-			offset,
-			nodes: rebase(maps.nodes, self.nodes.iter().map(|node| &node.id)),
-			edges: rebase(maps.edges, self.edges.iter().map(|edge| &edge.id)),
-			blocks: rebase(maps.blocks, self.blocks.iter().map(|block| &block.id)),
-		};
-
-		if let Some(geo_map) = maps.geo_map {
-			self.geo_map = Some(geo_map.rebase(&rebase));
-		}
-
-		self
-			.maps
-			.extend(maps.maps.into_iter().map(|map| map.rebase(&rebase)));
-	}
+	const VERSION: u16 = 0x0003;
 }
 
 #[derive(Debug, Decode, Encode)]
@@ -189,180 +138,4 @@ impl<T> From<Ref<T>> for usize {
 	fn from(from: Ref<T>) -> Self {
 		from.0
 	}
-}
-
-#[derive(Clone, Debug, Decode, Encode)]
-pub struct Element {
-	pub id: String,
-	pub condition: ElementCondition,
-}
-
-#[derive(
-	Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Decode, Encode,
-)]
-pub enum ElementCondition {
-	Fixed(bool),
-	Node(Ref<Node>),
-	Edge(Ref<Edge>),
-}
-
-#[derive(Clone, Debug, Decode, Encode)]
-pub struct Node {
-	pub id: String,
-
-	pub scratchpad: Option<String>,
-	pub parent: Option<Ref<Node>>,
-}
-
-#[derive(Clone, Debug, Decode, Encode)]
-pub struct Edge {
-	pub id: String,
-}
-
-#[derive(Clone, Debug, Decode, Encode)]
-pub struct Block {
-	pub id: String,
-
-	/// parent nodes only
-	pub nodes: Vec<Ref<Node>>,
-	pub edges: Vec<Ref<Edge>>,
-	pub non_routes: Vec<BlockRoute>,
-
-	pub stands: Vec<String>,
-}
-
-#[derive(
-	Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Decode, Encode,
-)]
-/// child nodes only
-pub struct BlockRoute {
-	pub from: Ref<Node>,
-	pub to: Ref<Node>,
-}
-
-#[derive(Clone, Debug, Decode, Encode)]
-pub struct Profile {
-	pub id: String,
-	pub name: String,
-
-	pub nodes: Vec<NodeCondition>,
-	pub edges: Vec<EdgeCondition>,
-	pub blocks: Vec<BlockCondition>,
-
-	pub presets: Vec<Preset>,
-}
-
-#[derive(
-	Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Decode, Encode,
-)]
-pub enum NodeCondition {
-	Fixed { state: NodeState },
-	Direct { reset: ResetCondition },
-	Router { sticky: bool },
-}
-
-#[derive(Clone, Debug, Decode, Encode)]
-pub enum EdgeCondition {
-	Fixed {
-		state: EdgeState,
-	},
-	Direct {
-		nodes: NodeExpression,
-	},
-	Router {
-		block: Ref<Block>,
-		routes: Vec<BlockRoute>,
-	},
-}
-
-#[derive(Clone, Debug, Decode, Encode)]
-pub struct NodeExpression {
-	pub disjunction: Vec<NodeConjunction>,
-}
-
-impl NodeExpression {
-	pub fn evaluate(
-		&self,
-		node_state: &impl Fn(Ref<Node>) -> NodeState,
-	) -> EdgeState {
-		if self
-			.disjunction
-			.iter()
-			.any(|conjunction| conjunction.evaluate(node_state))
-		{
-			EdgeState::On
-		} else {
-			EdgeState::Off
-		}
-	}
-}
-
-#[derive(Clone, Debug, Decode, Encode)]
-pub struct NodeConjunction {
-	pub positive: Vec<Ref<Node>>,
-	pub negative: Vec<Ref<Node>>,
-}
-
-impl NodeConjunction {
-	fn evaluate(&self, node_state: &impl Fn(Ref<Node>) -> NodeState) -> bool {
-		self
-			.positive
-			.iter()
-			.all(|node| node_state(*node) == NodeState::On)
-			&& self
-				.negative
-				.iter()
-				.all(|node| node_state(*node) == NodeState::Off)
-	}
-}
-
-#[derive(
-	Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Decode, Encode,
-)]
-pub struct BlockCondition {
-	pub reset: ResetCondition,
-}
-
-#[derive(
-	Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Decode, Encode,
-)]
-pub enum ResetCondition {
-	None,
-	TimeSecs(u32),
-}
-
-#[derive(Clone, Debug, Decode, Encode)]
-pub struct Preset {
-	pub name: String,
-
-	pub nodes: Vec<(Ref<Node>, NodeState)>,
-	pub blocks: Vec<(Ref<Block>, BlockState)>,
-}
-
-#[derive(
-	Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Decode, Encode,
-)]
-#[repr(u8)]
-pub enum NodeState {
-	Off,
-	On,
-}
-
-#[derive(
-	Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Decode, Encode,
-)]
-#[repr(u8)]
-pub enum EdgeState {
-	Off,
-	On,
-}
-
-#[derive(
-	Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Decode, Encode,
-)]
-pub enum BlockState {
-	Clear,
-	Relax,
-	/// parent nodes
-	Route((Ref<Node>, Ref<Node>)),
 }

@@ -1,5 +1,6 @@
 use crate::*;
 
+use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 
@@ -20,11 +21,13 @@ impl Error for MapsLoadTopskyError {}
 enum Group {
 	None,
 	Base,
-	Node(usize, NodeGroup),
-	Edge(usize, EdgeGroup),
-	Block(usize, BlockGroup),
+	Node(Ref<Node>, NodeGroup),
+	Bind(Ref<Bind>, BindGroup),
+	Block(Ref<Block>, BlockGroup),
+	Preset(Ref<Preset>),
 }
 
+#[derive(PartialEq)]
 enum NodeGroup {
 	Off,
 	On,
@@ -32,7 +35,8 @@ enum NodeGroup {
 	Target,
 }
 
-enum EdgeGroup {
+#[derive(PartialEq)]
+enum BindGroup {
 	Off,
 	On,
 	Pending,
@@ -57,24 +61,12 @@ impl<'a, T, U> Indexer<'a, T, U> {
 }
 
 impl<'a, T: From<U>, U: Hash + Eq + Clone> Indexer<'a, T, U> {
-	fn index(&mut self, value: U) -> usize {
-		*self.map.entry(value.clone()).or_insert_with(|| {
+	fn index<V>(&mut self, value: U) -> Ref<V> {
+		let index = *self.map.entry(value.clone()).or_insert_with(|| {
 			self.list.push(value.into());
 			self.list.len() - 1
-		})
-	}
-}
-
-trait Expand<T> {
-	fn expand(&mut self, i: usize) -> &mut T;
-}
-
-impl<T: Default> Expand<T> for Vec<T> {
-	fn expand(&mut self, i: usize) -> &mut T {
-		if self.len() < i + 1 {
-			self.resize_with(i + 1, T::default);
-		}
-		self.get_mut(i).unwrap()
+		});
+		index.into()
 	}
 }
 
@@ -89,16 +81,19 @@ impl Maps {
 
 		let mut maps = Self {
 			nodes: Vec::new(),
-			edges: Vec::new(),
 			blocks: Vec::new(),
+			binds: Vec::new(),
+			presets: Vec::new(),
+
 			geo_map: None,
 			maps: Vec::new(),
 			styles: Vec::new(),
 		};
 
 		let mut nodes = Indexer::new(&mut maps.nodes);
-		let mut edges = Indexer::new(&mut maps.edges);
 		let mut blocks = Indexer::new(&mut maps.blocks);
+		let mut binds = Indexer::new(&mut maps.binds);
+		let mut presets = Indexer::new(&mut maps.presets);
 		let mut styles = Indexer::new(&mut maps.styles);
 
 		let mut colors = HashMap::<String, Color>::new();
@@ -174,14 +169,29 @@ impl Maps {
 					y: unwrap!(parts[1].parse::<f32>()),
 				})
 			};
-			let parse_coord = |parts: &[&str]| {
+			let parse_map_point = |parts: &[&str]| {
+				Ok(MapPoint {
+					point: parse_point(&parts)?,
+					offset: if parts.len() > 2 {
+						parse_point(&parts[2..])?
+					} else {
+						Point::default()
+					},
+				})
+			};
+			let parse_geo_point = |parts: &[&str]| {
 				Ok(GeoPoint {
 					geo: Geo {
 						lat: unwrap!(parts[0].parse::<f32>()),
 						lon: unwrap!(parts[1].parse::<f32>()),
 					},
-					offset: if parts.len() > 2 {
+					offset_view: if parts.len() > 2 {
 						parse_point(&parts[2..])?
+					} else {
+						Point::default()
+					},
+					offset_grid: if parts.len() > 4 {
+						parse_point(&parts[4..])?
 					} else {
 						Point::default()
 					},
@@ -222,7 +232,7 @@ impl Maps {
 					if let Some(map) = &mut map {
 						map.views.push(View {
 							name: args[0].into(),
-							bounds: Box {
+							bounds: Rect {
 								min: parse_point(&args[1..3])?,
 								max: parse_point(&args[3..5])?,
 							},
@@ -294,16 +304,16 @@ impl Maps {
 						},
 					);
 				},
-				"EDGE" => {
+				"BIND" => {
 					check_args!(2);
 
-					group = Group::Edge(
-						edges.index(args[0]),
+					group = Group::Bind(
+						binds.index(args[0]),
 						match args[1] {
-							"OFF" => EdgeGroup::Off,
-							"ON" => EdgeGroup::On,
-							"PENDING" => EdgeGroup::Pending,
-							other => bail!("unknown edge group {other}"),
+							"OFF" => BindGroup::Off,
+							"ON" => BindGroup::On,
+							"PENDING" => BindGroup::Pending,
+							other => bail!("unknown bind group {other}"),
 						},
 					);
 				},
@@ -323,15 +333,20 @@ impl Maps {
 
 					group = Group::Base;
 				},
+				"PRESET" => {
+					check_args!(1);
+
+					group = Group::Preset(presets.index(args[0]));
+				},
 				"COORD" | "POINT" => {
 					if geo.is_some() {
+						check_args!(2 | 4 | 6);
+
+						coord_list.push(parse_geo_point(&args)?);
+					} else if map.is_some() {
 						check_args!(2 | 4);
 
-						coord_list.push(parse_coord(&args)?);
-					} else if map.is_some() {
-						check_args!(2);
-
-						point_list.push(parse_point(&args)?);
+						point_list.push(parse_map_point(&args)?);
 					} else {
 						bail!("{command} outside map context")
 					}
@@ -339,30 +354,23 @@ impl Maps {
 				"COORDTARGET" | "POINTTARGET" => {
 					check_args!(0);
 
+					let target_command = match &group {
+						Group::Node(i, NodeGroup::Target) => TargetCommand::Node(*i),
+						Group::Block(i, BlockGroup::Target) => TargetCommand::Block(*i),
+						Group::Preset(i) => TargetCommand::Preset(*i),
+						_ => bail!("{command} outside target context"),
+					};
+
 					if let Some(geo) = &mut geo {
-						match group {
-							Group::Node(i, NodeGroup::Target) => {
-								&mut geo.nodes.expand(i).target
-							},
-							Group::Block(i, BlockGroup::Target) => {
-								&mut geo.blocks.expand(i).target
-							},
-							_ => bail!("{command} outside target context"),
-						}
-						.polygons
-						.push(std::mem::take(&mut coord_list));
+						geo.targets.push(Target {
+							polygons: vec![std::mem::take(&mut coord_list)],
+							command: target_command,
+						});
 					} else if let Some(map) = &mut map {
-						match group {
-							Group::Node(i, NodeGroup::Target) => {
-								&mut map.nodes.expand(i).target
-							},
-							Group::Block(i, BlockGroup::Target) => {
-								&mut map.blocks.expand(i).target
-							},
-							_ => bail!("{command} outside target context"),
-						}
-						.polygons
-						.push(std::mem::take(&mut point_list));
+						map.targets.push(Target {
+							polygons: vec![std::mem::take(&mut point_list)],
+							command: target_command,
+						});
 					} else {
 						bail!("{command} outside map context")
 					}
@@ -414,41 +422,32 @@ impl Maps {
 						fill_color,
 					}));
 
+					let display = match &group {
+						Group::Base => PathDisplay::Fixed { style },
+						Group::Node(node, group) => PathDisplay::Node {
+							node: *node,
+							off: (group == &NodeGroup::Off).then_some(style),
+							on: (group == &NodeGroup::On).then_some(style),
+							selected: (group == &NodeGroup::Selected).then_some(style),
+						},
+						Group::Bind(bind, group) => PathDisplay::Bind {
+							bind: *bind,
+							off: (group == &BindGroup::Off).then_some(style),
+							on: (group == &BindGroup::On).then_some(style),
+							pending: (group == &BindGroup::Pending).then_some(style),
+						},
+						_ => bail!("{command} outside draw context"),
+					};
+
 					if let Some(geo) = &mut geo {
-						match group {
-							Group::Node(i, NodeGroup::Off) => &mut geo.nodes.expand(i).off,
-							Group::Node(i, NodeGroup::On) => &mut geo.nodes.expand(i).on,
-							Group::Node(i, NodeGroup::Selected) => {
-								&mut geo.nodes.expand(i).selected
-							},
-							Group::Edge(i, EdgeGroup::Off) => &mut geo.edges.expand(i).off,
-							Group::Edge(i, EdgeGroup::On) => &mut geo.edges.expand(i).on,
-							Group::Edge(i, EdgeGroup::Pending) => {
-								&mut geo.edges.expand(i).pending
-							},
-							_ => bail!("{command} outside draw context"),
-						}
-						.push(Path {
+						geo.paths.push(Path {
 							points: std::mem::take(&mut coord_list),
-							style,
+							display,
 						});
 					} else if let Some(map) = &mut map {
-						match group {
-							Group::Node(i, NodeGroup::Off) => &mut map.nodes.expand(i).off,
-							Group::Node(i, NodeGroup::On) => &mut map.nodes.expand(i).on,
-							Group::Node(i, NodeGroup::Selected) => {
-								&mut map.nodes.expand(i).selected
-							},
-							Group::Edge(i, EdgeGroup::Off) => &mut map.edges.expand(i).off,
-							Group::Edge(i, EdgeGroup::On) => &mut map.edges.expand(i).on,
-							Group::Edge(i, EdgeGroup::Pending) => {
-								&mut map.edges.expand(i).pending
-							},
-							_ => bail!("{command} outside draw context"),
-						}
-						.push(Path {
+						map.paths.push(Path {
 							points: std::mem::take(&mut point_list),
-							style,
+							display,
 						});
 					} else {
 						bail!("{command} outside map context")
@@ -466,29 +465,29 @@ impl Maps {
 							check_args!(6..);
 
 							let size = unwrap!(args[3].parse());
-							let condition = match args[1] {
-								"NODE" => CountdownCondition::Node(nodes.index(args[2]).into()),
-								"BLOCK" => {
-									CountdownCondition::Block(blocks.index(args[2]).into())
-								},
+							let target = match args[1] {
+								"NODE" => ResetTarget::Node(nodes.index(args[2])),
+								"BLOCK" => ResetTarget::Block(blocks.index(args[2])),
 								other => bail!("invalid counter condition {other}"),
 							};
 
 							if let Some(geo) = &mut geo {
-								check_args!(6 | 8);
+								check_args!(6 | 8 | 10);
 
 								geo.widgets.push(Widget::Countdown {
-									position: parse_coord(&args[4..])?,
+									position: parse_geo_point(&args[4..])?,
 									size,
-									condition,
+									target,
+									style: CountdownStyle::Generic,
 								});
 							} else if let Some(map) = &mut map {
 								check_args!(6);
 
 								map.widgets.push(Widget::Countdown {
-									position: parse_point(&args[4..])?,
+									position: parse_map_point(&args[4..])?,
 									size,
-									condition,
+									target,
+									style: CountdownStyle::Generic,
 								});
 							}
 						},

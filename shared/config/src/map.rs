@@ -1,10 +1,11 @@
-use super::*;
+use crate::*;
 
 #[derive(Clone, Debug, Decode, Encode)]
 pub struct Maps {
 	pub nodes: Vec<String>,
-	pub edges: Vec<String>,
 	pub blocks: Vec<String>,
+	pub binds: Vec<String>,
+	pub presets: Vec<String>,
 
 	pub geo_map: Option<GeoMap>,
 	pub maps: Vec<Map>,
@@ -12,100 +13,33 @@ pub struct Maps {
 }
 
 impl Loadable for Maps {
-	const VERSION: u16 = 0x8002;
-}
-
-pub(crate) struct Rebase {
-	pub offset: usize,
-	pub nodes: Vec<Option<usize>>,
-	pub edges: Vec<Option<usize>>,
-	pub blocks: Vec<Option<usize>>,
-}
-
-fn rebase_vec<T: Default>(
-	mut source: Vec<T>,
-	rebase: &[Option<usize>],
-	offset: impl Fn(&mut T),
-) -> Vec<T> {
-	rebase
-		.iter()
-		.map(|i| {
-			i.and_then(|i| source.get_mut(i))
-				.map(std::mem::take)
-				.unwrap_or_default()
-		})
-		.map(|mut t| {
-			offset(&mut t);
-			t
-		})
-		.collect()
-}
-
-fn offset_paths<T: Projectable>(paths: &mut [Path<T>], offset: usize) {
-	paths.iter_mut().for_each(|path| path.style.0 += offset);
+	const VERSION: u16 = 0x8003;
 }
 
 #[derive(Clone, Debug, Default, Decode, Encode)]
 pub struct GeoMap {
-	pub nodes: Vec<NodeDisplay<GeoPoint>>,
-	pub edges: Vec<EdgeDisplay<GeoPoint>>,
-	pub blocks: Vec<BlockDisplay<GeoPoint>>,
+	pub paths: Vec<Path<GeoPoint>>,
+	pub targets: Vec<Target<GeoPoint>>,
 	pub widgets: Vec<Widget<GeoPoint>>,
-}
-
-impl GeoMap {
-	pub(crate) fn rebase(self, rebase: &Rebase) -> Self {
-		Self {
-			nodes: rebase_vec(self.nodes, &rebase.nodes, |d| d.offset(rebase.offset)),
-			edges: rebase_vec(self.edges, &rebase.edges, |d| d.offset(rebase.offset)),
-			blocks: rebase_vec(self.blocks, &rebase.blocks, |_| ()),
-			widgets: self
-				.widgets
-				.into_iter()
-				.filter_map(|w| w.rebase(rebase))
-				.collect(),
-		}
-	}
 }
 
 #[derive(Clone, Debug, Default, Decode, Encode)]
 pub struct Map {
 	pub background: Color,
-	pub base: Vec<Path<Point>>,
-
-	pub nodes: Vec<NodeDisplay<Point>>,
-	pub edges: Vec<EdgeDisplay<Point>>,
-	pub blocks: Vec<BlockDisplay<Point>>,
-	pub widgets: Vec<Widget<Point>>,
-
+	pub paths: Vec<Path<MapPoint>>,
+	pub targets: Vec<Target<MapPoint>>,
+	pub widgets: Vec<Widget<MapPoint>>,
 	pub views: Vec<View>,
-}
-
-impl Map {
-	pub(crate) fn rebase(mut self, rebase: &Rebase) -> Self {
-		offset_paths(&mut self.base, rebase.offset);
-		Self {
-			nodes: rebase_vec(self.nodes, &rebase.nodes, |d| d.offset(rebase.offset)),
-			edges: rebase_vec(self.edges, &rebase.edges, |d| d.offset(rebase.offset)),
-			blocks: rebase_vec(self.blocks, &rebase.blocks, |_| ()),
-			widgets: self
-				.widgets
-				.into_iter()
-				.filter_map(|w| w.rebase(rebase))
-				.collect(),
-			..self
-		}
-	}
 }
 
 #[derive(Clone, Debug, Decode, Encode)]
 pub struct View {
 	pub name: String,
-	pub bounds: Box,
+	pub bounds: Rect,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Decode, Encode)]
-pub struct Box {
+pub struct Rect {
 	pub min: Point,
 	pub max: Point,
 }
@@ -113,49 +47,39 @@ pub struct Box {
 #[derive(Clone, Debug, Decode, Encode)]
 pub struct Path<T: Projectable> {
 	pub points: Vec<T>,
-	pub style: Ref<Style>,
+	pub display: PathDisplay,
 }
 
-#[derive(Clone, Debug, Default, Decode, Encode)]
+#[derive(Clone, Debug, Decode, Encode)]
+pub enum PathDisplay {
+	Fixed {
+		style: Ref<Style>,
+	},
+	Node {
+		node: Ref<Node>,
+		off: Option<Ref<Style>>,
+		on: Option<Ref<Style>>,
+		selected: Option<Ref<Style>>,
+	},
+	Bind {
+		bind: Ref<Bind>,
+		off: Option<Ref<Style>>,
+		on: Option<Ref<Style>>,
+		pending: Option<Ref<Style>>,
+	},
+}
+
+#[derive(Clone, Debug, Decode, Encode)]
 pub struct Target<T: Projectable> {
 	pub polygons: Vec<Vec<T>>,
+	pub command: TargetCommand,
 }
 
-#[derive(Clone, Debug, Default, Decode, Encode)]
-pub struct NodeDisplay<T: Projectable> {
-	pub off: Vec<Path<T>>,
-	pub on: Vec<Path<T>>,
-	pub selected: Vec<Path<T>>,
-
-	pub target: Target<T>,
-}
-
-impl<T: Projectable> NodeDisplay<T> {
-	fn offset(&mut self, offset: usize) {
-		offset_paths(&mut self.off, offset);
-		offset_paths(&mut self.on, offset);
-		offset_paths(&mut self.selected, offset);
-	}
-}
-
-#[derive(Clone, Debug, Default, Decode, Encode)]
-pub struct EdgeDisplay<T: Projectable> {
-	pub off: Vec<Path<T>>,
-	pub on: Vec<Path<T>>,
-	pub pending: Vec<Path<T>>,
-}
-
-impl<T: Projectable> EdgeDisplay<T> {
-	fn offset(&mut self, offset: usize) {
-		offset_paths(&mut self.off, offset);
-		offset_paths(&mut self.on, offset);
-		offset_paths(&mut self.pending, offset);
-	}
-}
-
-#[derive(Clone, Debug, Default, Decode, Encode)]
-pub struct BlockDisplay<T: Projectable> {
-	pub target: Target<T>,
+#[derive(Clone, Debug, Decode, Encode)]
+pub enum TargetCommand {
+	Node(Ref<Node>),
+	Block(Ref<Block>),
+	Preset(Ref<Preset>),
 }
 
 #[derive(Clone, Debug, Decode, Encode)]
@@ -163,35 +87,27 @@ pub enum Widget<T: Projectable> {
 	Countdown {
 		position: T,
 		size: f32,
-		condition: CountdownCondition,
+		target: ResetTarget,
+		style: CountdownStyle,
 	},
-}
-
-impl<T: Projectable> Widget<T> {
-	fn rebase(mut self, rebase: &Rebase) -> Option<Self> {
-		let Self::Countdown { condition, .. } = &mut self;
-		match condition {
-			CountdownCondition::Node(i) => {
-				*i = rebase.nodes.iter().position(|j| *j == Some(i.0))?.into();
-			},
-			CountdownCondition::Block(i) => {
-				*i = rebase.blocks.iter().position(|j| *j == Some(i.0))?.into();
-			},
-		}
-
-		Some(self)
-	}
 }
 
 #[derive(
 	Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Decode, Encode,
 )]
-pub enum CountdownCondition {
-	Node(Ref<Node>),
-	Block(Ref<Block>),
+pub enum CountdownStyle {
+	Generic,
 }
 
-pub trait Projectable: Clone + Debug {}
+mod sealed {
+	use std::fmt::Debug;
+
+	pub trait Sealed {}
+	pub trait Projectable: Clone + Debug + Sealed {}
+}
+
+use sealed::Sealed;
+pub use sealed::Projectable;
 
 #[derive(
 	Clone, Copy, Debug, Default, PartialEq, PartialOrd, Decode, Encode,
@@ -201,7 +117,21 @@ pub struct Point {
 	pub y: f32,
 }
 
+impl Sealed for Point {}
 impl Projectable for Point {}
+
+#[derive(
+	Clone, Copy, Debug, Default, PartialEq, PartialOrd, Decode, Encode,
+)]
+pub struct MapPoint {
+	pub point: Point,
+	/// An offset in screen-space pixels applied in line with the screen axes but
+	/// without the scaling applied to the main point.
+	pub offset: Point,
+}
+
+impl Sealed for MapPoint {}
+impl Projectable for MapPoint {}
 
 #[derive(
 	Clone, Copy, Debug, Default, PartialEq, PartialOrd, Decode, Encode,
@@ -211,6 +141,7 @@ pub struct Geo {
 	pub lon: f32,
 }
 
+impl Sealed for Geo {}
 impl Projectable for Geo {}
 
 #[derive(
@@ -218,9 +149,13 @@ impl Projectable for Geo {}
 )]
 pub struct GeoPoint {
 	pub geo: Geo,
-	pub offset: Point,
+	/// An offset in screen-space pixels applied in line with the screen axes.
+	pub offset_view: Point,
+	/// An offset in screen-space pixels applied in line with the geographic axes.
+	pub offset_grid: Point,
 }
 
+impl Sealed for GeoPoint {}
 impl Projectable for GeoPoint {}
 
 #[derive(
