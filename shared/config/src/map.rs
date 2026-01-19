@@ -1,6 +1,11 @@
 mod rebase;
+#[cfg(feature = "topsky")]
+mod topsky;
 
 use crate::*;
+
+#[cfg(feature = "topsky")]
+pub use topsky::*;
 
 #[derive(Clone, Debug, Decode, Encode)]
 pub struct Maps {

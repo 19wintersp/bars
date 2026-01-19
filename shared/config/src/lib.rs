@@ -1,7 +1,5 @@
 mod aerodrome;
 mod map;
-#[cfg(feature = "topsky")]
-mod topsky;
 
 use std::cmp::Ordering;
 use std::fmt::Debug;
@@ -19,8 +17,6 @@ use flate2::Compression;
 
 pub use aerodrome::*;
 pub use map::*;
-#[cfg(feature = "topsky")]
-pub use topsky::*;
 
 static MAGIC: &[u8] = b"\xffBARS\x13eu";
 
