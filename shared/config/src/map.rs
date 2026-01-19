@@ -1,3 +1,5 @@
+mod rebase;
+
 use crate::*;
 
 #[derive(Clone, Debug, Decode, Encode)]
@@ -106,8 +108,8 @@ mod sealed {
 	pub trait Projectable: Clone + Debug + Sealed {}
 }
 
-use sealed::Sealed;
 pub use sealed::Projectable;
+use sealed::Sealed;
 
 #[derive(
 	Clone, Copy, Debug, Default, PartialEq, PartialOrd, Decode, Encode,
