@@ -82,7 +82,7 @@ pub struct Target<T: Projectable> {
 	pub command: TargetCommand,
 }
 
-#[derive(Clone, Debug, Decode, Encode)]
+#[derive(Clone, Copy, Debug, Decode, Encode)]
 pub enum TargetCommand {
 	Node(Ref<Node>),
 	Block(Ref<Block>),

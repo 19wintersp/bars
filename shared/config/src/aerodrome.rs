@@ -1,4 +1,6 @@
-use crate::{Ref, BINCODE_CONFIG};
+use crate::{BINCODE_CONFIG, Color, Geo, Ref};
+
+use std::collections::HashMap;
 
 use bincode::error::{DecodeError, EncodeError};
 use bincode::{Decode, Encode};
@@ -12,6 +14,12 @@ pub struct Aerodrome {
 
 	pub profiles: Vec<Profile>,
 	pub presets: Vec<Preset>,
+
+	/// A mapping of BARS IDs to scenery elements.
+	///
+	/// This field is optional and may be empty or omit elements otherwise
+	/// referred to in the config.
+	pub elements: HashMap<String, Element>,
 }
 
 impl Aerodrome {
@@ -197,4 +205,12 @@ pub struct Preset {
 	pub blocks: Vec<(Ref<Block>, BlockState)>,
 
 	pub profiles: ProfileFilter,
+}
+
+#[derive(Clone, Debug, Decode, Encode)]
+pub struct Element {
+	pub name: String,
+	pub points: Vec<Geo>,
+	pub directional: bool,
+	pub color: Color,
 }
