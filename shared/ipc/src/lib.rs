@@ -1,11 +1,17 @@
+#[cfg(feature = "codec")]
+mod codec;
 #[cfg(feature = "tcp")]
 pub mod tcp;
+
+#[cfg(feature = "codec")]
+pub use self::codec::Codec;
 
 use bars_config::{
 	Aerodrome, Block, BlockState, GeoMap, Map, Node, Preset, Profile, Ref, State,
 	Style,
 };
 use bars_graph::MapUpdate;
+
 use serde::{Deserialize, Serialize};
 
 pub const PORT: u16 = 21314;

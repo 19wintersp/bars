@@ -11,9 +11,12 @@ repository.workspace = true
 bars-config = { workspace = true, features = ["serde"] }
 bars-graph = { workspace = true, features = ["serde"] }
 
+futures = { workspace = true, optional = true }
 postcard = { workspace = true, optional = true, features = ["use-std"] }
 serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, optional = true, features = ["io-util", "net"] }
+tokio-util = { workspace = true, optional = true, features = ["codec"] }
 
 [features]
-tcp = ["dep:postcard", "dep:tokio"]
+codec = ["dep:postcard", "dep:tokio", "dep:tokio-util"]
+tcp = ["codec", "dep:futures"]

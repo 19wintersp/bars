@@ -1,15 +1,16 @@
-use crate::{Downstream, Upstream};
+use crate::{Codec, Downstream, Upstream};
 
-use std::io::{Error, ErrorKind, Result};
-use std::marker::PhantomData;
+use std::io::{ErrorKind, Result};
 
+use futures::{Sink, Stream};
+use futures::sink::SinkExt;
+use futures::stream::StreamExt;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf, ReuniteError};
 use tokio::net::{TcpStream, ToSocketAddrs};
-
-const MAX_BUF_SIZE: usize = 0x10_0000;
+use tokio_util::codec::{FramedRead, FramedWrite};
 
 pub struct Channel<Rx, Tx> {
 	rx: Receiver<Rx>,
@@ -34,19 +35,17 @@ impl<Rx, Tx> Channel<Rx, Tx> {
 	}
 
 	pub fn into_stream(self) -> std::result::Result<TcpStream, ReuniteError> {
-		self.rx.rx.reunite(self.tx.tx)
+		self.rx.into_inner().reunite(self.tx.into_inner())
 	}
 }
 
 impl<Rx: DeserializeOwned, Tx> Channel<Rx, Tx> {
-	/// This method is **not** cancel-safe.
 	pub async fn recv(&mut self) -> Result<Rx> {
 		self.rx.recv().await
 	}
 }
 
 impl<Rx, Tx: Serialize> Channel<Rx, Tx> {
-	/// This method is **not** cancel-safe.
 	pub async fn send(&mut self, frame: &Tx) -> Result<()> {
 		self.tx.send(frame).await
 	}
@@ -67,60 +66,56 @@ impl Channel<Downstream, Upstream> {
 	}
 }
 
-pub struct Receiver<Rx> {
-	phantom: PhantomData<Rx>,
-	rx: OwnedReadHalf,
-}
+pub struct Receiver<Rx>(FramedRead<OwnedReadHalf, Codec<Rx>>);
 
 impl<Rx> Receiver<Rx> {
 	fn new(rx: OwnedReadHalf) -> Self {
-		Self {
-			phantom: PhantomData,
-			rx,
-		}
+		Self(FramedRead::new(rx, Codec::new()))
+	}
+
+	pub fn into_inner(self) -> OwnedReadHalf {
+		self.0.into_inner()
 	}
 }
 
 impl<Rx: DeserializeOwned> Receiver<Rx> {
-	/// This method is **not** cancel-safe.
 	pub async fn recv(&mut self) -> Result<Rx> {
-		let len = self.rx.read_u32().await? as usize;
-		if len > MAX_BUF_SIZE {
-			return Err(ErrorKind::FileTooLarge.into())
-		}
+		self
+			.0
+			.next()
+			.await
+			.ok_or(ErrorKind::UnexpectedEof.into())
+			.flatten()
+	}
 
-		let mut buf = vec![0u8; len];
-		self.rx.read_exact(&mut buf).await?;
-
-		postcard::from_bytes(&buf)
-			.map_err(|err| Error::new(ErrorKind::InvalidData, err))
+	pub fn into_stream(self) -> impl Stream<Item = Result<Rx>> {
+		self.0
 	}
 }
 
 /// Note that dropping this type will shut down the TCP connection.
-pub struct Sender<Tx> {
-	phantom: PhantomData<Tx>,
-	tx: OwnedWriteHalf,
-}
+pub struct Sender<Tx>(FramedWrite<OwnedWriteHalf, Codec<Tx>>);
 
 impl<Tx> Sender<Tx> {
 	fn new(tx: OwnedWriteHalf) -> Self {
-		Self {
-			phantom: PhantomData,
-			tx,
-		}
+		Self(FramedWrite::new(tx, Codec::new()))
+	}
+
+	pub fn into_inner(self) -> OwnedWriteHalf {
+		self.0.into_inner()
 	}
 }
 
 impl<Tx: Serialize> Sender<Tx> {
-	/// This method is **not** cancel-safe.
 	pub async fn send(&mut self, frame: &Tx) -> Result<()> {
-		let buf = postcard::to_stdvec(frame)
-			.map_err(|err| Error::new(ErrorKind::InvalidInput, err))?;
+		self.0.send(frame).await
+	}
 
-		self.tx.write_u32(buf.len() as u32).await?;
-		self.tx.write_all(&buf).await?;
+	pub fn sink_mut<'a>(&mut self) -> &mut impl Sink<&'a Tx> {
+		&mut self.0
+	}
 
-		Ok(())
+	pub fn into_sink<'a>(self) -> impl Sink<&'a Tx> {
+		self.0
 	}
 }
