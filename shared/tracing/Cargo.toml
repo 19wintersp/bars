@@ -1,5 +1,5 @@
 [package]
-name = "bars-config"
+name = "bars-tracing"
 version = "0.1.0"
 authors = ["Patrick Winters <19wintersp@gmail.com>"]
 edition.workspace = true
@@ -8,10 +8,9 @@ publish.workspace = true
 repository.workspace = true
 
 [dependencies]
-bincode.workspace = true
-flate2.workspace = true
-serde = { workspace = true, optional = true, features = ["derive"] }
+bars-platform.workspace = true
 
-[features]
-serde = ["dep:serde"]
-topsky = []
+anyhow.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["chrono"] }

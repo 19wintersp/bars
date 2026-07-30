@@ -8,6 +8,7 @@ use crate::*;
 pub use topsky::*;
 
 #[derive(Clone, Debug, Decode, Encode)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct Maps {
 	pub nodes: Vec<String>,
 	pub blocks: Vec<String>,
@@ -24,6 +25,7 @@ impl Loadable for Maps {
 }
 
 #[derive(Clone, Debug, Default, Decode, Encode)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct GeoMap {
 	pub paths: Vec<Path<GeoPoint>>,
 	pub targets: Vec<Target<GeoPoint>>,
@@ -31,6 +33,7 @@ pub struct GeoMap {
 }
 
 #[derive(Clone, Debug, Default, Decode, Encode)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct Map {
 	pub background: Color,
 	pub paths: Vec<Path<MapPoint>>,
@@ -40,24 +43,28 @@ pub struct Map {
 }
 
 #[derive(Clone, Debug, Decode, Encode)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct View {
 	pub name: String,
 	pub bounds: Rect,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Decode, Encode)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct Rect {
 	pub min: Point,
 	pub max: Point,
 }
 
 #[derive(Clone, Debug, Decode, Encode)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct Path<T: Projectable> {
 	pub points: Vec<T>,
 	pub display: PathDisplay,
 }
 
 #[derive(Clone, Debug, Decode, Encode)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub enum PathDisplay {
 	Fixed {
 		style: Ref<Style>,
@@ -77,12 +84,14 @@ pub enum PathDisplay {
 }
 
 #[derive(Clone, Debug, Decode, Encode)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct Target<T: Projectable> {
 	pub polygons: Vec<Vec<T>>,
 	pub command: TargetCommand,
 }
 
 #[derive(Clone, Copy, Debug, Decode, Encode)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub enum TargetCommand {
 	Node(Ref<Node>),
 	Block(Ref<Block>),
@@ -90,6 +99,7 @@ pub enum TargetCommand {
 }
 
 #[derive(Clone, Debug, Decode, Encode)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub enum Widget<T: Projectable> {
 	Countdown {
 		position: T,
@@ -102,6 +112,7 @@ pub enum Widget<T: Projectable> {
 #[derive(
 	Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Decode, Encode,
 )]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub enum CountdownStyle {
 	Generic,
 }
@@ -119,6 +130,7 @@ use sealed::Sealed;
 #[derive(
 	Clone, Copy, Debug, Default, PartialEq, PartialOrd, Decode, Encode,
 )]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct Point {
 	pub x: f32,
 	pub y: f32,
@@ -130,6 +142,7 @@ impl Projectable for Point {}
 #[derive(
 	Clone, Copy, Debug, Default, PartialEq, PartialOrd, Decode, Encode,
 )]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct MapPoint {
 	pub point: Point,
 	/// An offset in screen-space pixels applied in line with the screen axes but
@@ -143,6 +156,7 @@ impl Projectable for MapPoint {}
 #[derive(
 	Clone, Copy, Debug, Default, PartialEq, PartialOrd, Decode, Encode,
 )]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct Geo {
 	pub lat: f32,
 	pub lon: f32,
@@ -154,6 +168,7 @@ impl Projectable for Geo {}
 #[derive(
 	Clone, Copy, Debug, Default, PartialEq, PartialOrd, Decode, Encode,
 )]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct GeoPoint {
 	pub geo: Geo,
 	/// An offset in screen-space pixels applied in line with the screen axes.
@@ -168,6 +183,7 @@ impl Projectable for GeoPoint {}
 #[derive(
 	Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Decode, Encode,
 )]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct Style {
 	pub stroke_style: StrokeStyle,
 	pub stroke_width: StrokeWidth,
@@ -182,6 +198,7 @@ pub struct Style {
 #[derive(
 	Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Decode, Encode,
 )]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct Color {
 	pub r: u8,
 	pub g: u8,
@@ -203,6 +220,7 @@ impl Default for Color {
 #[derive(
 	Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Decode, Encode,
 )]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub enum StrokeStyle {
 	None,
 	Dash(i32),
@@ -211,6 +229,7 @@ pub enum StrokeStyle {
 #[derive(
 	Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Decode, Encode,
 )]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct StrokeWidth(u8);
 
 impl From<StrokeWidth> for f32 {
@@ -228,16 +247,19 @@ impl From<f32> for StrokeWidth {
 #[derive(
 	Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Decode, Encode,
 )]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct StrokeCap(pub i32);
 
 #[derive(
 	Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Decode, Encode,
 )]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct StrokeJoin(pub i32);
 
 #[derive(
 	Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Decode, Encode,
 )]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub enum FillStyle {
 	None,
 	Fill,

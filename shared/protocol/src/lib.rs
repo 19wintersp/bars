@@ -15,57 +15,6 @@ pub enum BlockState {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct Aerodrome {
-	pub profile: String,
-	pub nodes: HashMap<String, NodeState>,
-	pub blocks: HashMap<String, BlockState>,
-	patch: Option<Patch>,
-}
-
-impl Aerodrome {
-	pub fn new(profile: String) -> Self {
-		Self {
-			profile,
-			nodes: HashMap::new(),
-			blocks: HashMap::new(),
-			patch: None,
-		}
-	}
-
-	fn patch(&mut self) -> &mut Patch {
-		self.patch.get_or_insert_default()
-	}
-
-	pub fn set_profile(&mut self, profile: String) {
-		self.patch().profile = Some(profile.clone());
-		self.profile = profile;
-	}
-
-	pub fn set_node(&mut self, id: String, state: NodeState) {
-		self.patch().nodes.insert(id.clone(), state);
-		self.nodes.insert(id, state);
-	}
-
-	pub fn set_block(&mut self, id: String, state: BlockState) {
-		self.patch().blocks.insert(id.clone(), state.clone());
-		self.blocks.insert(id, state);
-	}
-
-	pub fn take_patch(&mut self) -> Option<Patch> {
-		std::mem::take(&mut self.patch)
-	}
-
-	pub fn apply_patch(&mut self, patch: Patch) {
-		if let Some(profile) = patch.profile {
-			self.profile = profile;
-		}
-
-		self.nodes.extend(patch.nodes.into_iter());
-		self.blocks.extend(patch.blocks.into_iter());
-	}
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Patch {
 	pub profile: Option<String>,
@@ -98,16 +47,6 @@ impl Default for Patch {
 	}
 }
 
-impl From<Aerodrome> for Patch {
-	fn from(from: Aerodrome) -> Self {
-		Self {
-			profile: Some(from.profile),
-			nodes: from.nodes,
-			blocks: from.blocks,
-		}
-	}
-}
-
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(
 	rename_all = "SCREAMING_SNAKE_CASE",
@@ -117,16 +56,28 @@ impl From<Aerodrome> for Patch {
 )]
 pub enum Upstream<P = Patch> {
 	Heartbeat,
+	#[serde(rename(serialize = "HEARTBEAT"))]
 	HeartbeatAck,
 	Close,
+	GetState,
 	StateUpdate {
 		object_id: String,
 		state: bool,
+	},
+	MultiStateUpdate {
+		updates: Vec<StateUpdate>,
 	},
 	SharedStateUpdate {
 		#[serde(rename = "sharedStatePatch")]
 		patch: P,
 	},
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StateUpdate {
+	object_id: String,
+	state: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -150,7 +101,7 @@ pub enum Downstream<P = Patch> {
 		controller_id: String,
 	},
 	InitialState {
-		connection_type: String,
+		connection_type: ConnectionType,
 		#[serde(rename = "objects")]
 		scenery: Vec<SceneryObject>,
 		#[serde(rename = "sharedState")]
@@ -166,6 +117,13 @@ pub enum Downstream<P = Patch> {
 		patch: P,
 		controller_id: String,
 	},
+	StateSnapshot {
+		objects: Vec<SceneryObject>,
+		shared_state: P,
+		#[serde(default)]
+		controllers: Vec<String>,
+		offline: bool,
+	},
 	#[serde(other)]
 	Other,
 }
@@ -174,6 +132,7 @@ pub enum Downstream<P = Patch> {
 pub struct SceneryObject {
 	pub id: String,
 	pub state: bool,
+	pub timestamp: u64,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -183,4 +142,16 @@ pub struct State {
 	pub controllers: Vec<String>,
 	pub pilots: Vec<String>,
 	pub offline: bool,
+}
+
+#[derive(
+	Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectionType {
+	Controller,
+	Observer,
+	Pilot,
+	#[serde(other)]
+	Other,
 }

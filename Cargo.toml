@@ -1,25 +1,41 @@
 [workspace]
 resolver = "2"
 members = [
-	"client/",
+	"plugin/",
+
 	"shared/config/",
+	"shared/euroscope/",
+	"shared/graph/",
+	"shared/graphics/",
+	"shared/ipc/",
+	"shared/platform/",
 	"shared/protocol/",
-	"tool/dump-config/",
-	"tool/server/",
+	"shared/tracing",
 ]
 
 [workspace.package]
-edition = "2021"
+edition = "2024"
 license = "MIT OR Apache-2.0"
 publish = false
 repository = "https://github.com/19wintersp/bars"
 
 [workspace.dependencies]
 bars-config = { path = "shared/config/" }
+bars-euroscope = { path = "shared/euroscope/" }
+bars-graph = { path = "shared/graph/" }
+bars-graphics = { path = "shared/graphics/" }
+bars-ipc = { path = "shared/ipc/" }
+bars-platform = { path = "shared/platform/" }
 bars-protocol = { path = "shared/protocol/" }
+bars-tracing = { path = "shared/tracing/" }
+
 anyhow = "1.0"
-bincode = "2.0"
+bincode = "=2.0.1"
+bindgen = "0.72"
 cbindgen = "0.28"
+cc = "1.2"
+cxx = "1.0.194"
+cxx-build = "1.0"
 chrono = "0.4"
 clap = "4.5"
 flate2 = "1.0"
@@ -28,9 +44,11 @@ hyper = "1.6"
 hyper-util = "0.1"
 kml = "0.8"
 kurbo = "0.11"
+postcard = "1.1"
 reqwest = "0.12"
 serde = "1.0"
 serde_json = "1.0"
+syn = "2.0"
 tokio = "1.43"
 tokio-tungstenite = "0.27"
 toml = "0.8"

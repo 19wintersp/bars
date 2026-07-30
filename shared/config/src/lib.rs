@@ -15,6 +15,9 @@ use flate2::read::DeflateDecoder;
 use flate2::write::DeflateEncoder;
 use flate2::Compression;
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 pub use aerodrome::*;
 pub use map::*;
 
@@ -74,6 +77,7 @@ pub trait Loadable: Decode<()> + Encode {
 
 /// A bundle of aerodrome configurations and maps.
 #[derive(Clone, Debug, Decode, Encode)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct Config {
 	pub name: Option<String>,
 	pub version: Option<String>,
@@ -89,6 +93,7 @@ impl Loadable for Config {
 }
 
 #[derive(Debug, Decode, Encode)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct Ref<T>(pub usize, PhantomData<T>);
 
 impl<T> Clone for Ref<T> {
