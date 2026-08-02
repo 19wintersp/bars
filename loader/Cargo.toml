@@ -1,23 +1,19 @@
 [package]
-name = "bars-plugin-core"
-version = "0.1.0"
+name = "bars-plugin-loader"
 authors = ["Patrick Winters <19wintersp@gmail.com>"]
-license = "GPL-3.0-or-later"
+version.workspace = true
 edition.workspace = true
+license.workspace = true
 publish.workspace = true
 repository.workspace = true
 
 [dependencies]
-bars-config.workspace = true
 bars-euroscope.workspace = true
-bars-graph.workspace = true
-bars-graphics.workspace = true
-bars-ipc = { workspace = true, features = ["tcp"] }
 bars-platform.workspace = true
 bars-tracing.workspace = true
 
 anyhow.workspace = true
-tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
+libloading.workspace = true
 tracing.workspace = true
 
 [lib]

@@ -3,37 +3,29 @@ use std::io::stderr;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use bars_protocol::SceneryObject;
+use async_tungstenite::tokio::TokioAdapter;
+use bars_protocol::{ConnectionType, SceneryObject, StateUpdate};
 
 use anyhow::Result;
-
+use async_tungstenite::WebSocketStream;
+use async_tungstenite::tungstenite::handshake::derive_accept_key;
+use async_tungstenite::tungstenite::protocol::{Message, Role};
 use clap::Parser;
-
-use futures::{SinkExt, StreamExt};
-
+use futures::StreamExt;
 use hyper::body::Incoming;
 use hyper::server::conn::http1 as conn;
 use hyper::service::service_fn;
-use hyper::{header, Method, Request, Response, StatusCode, Version};
-
+use hyper::upgrade::Upgraded;
+use hyper::{Method, Request, Response, StatusCode, Version, header};
 use hyper_util::rt::TokioIo;
-
-use serde_json::{json, Value};
-
-use tokio::io::{AsyncRead, AsyncWrite};
+use serde_json::{Value, json};
 use tokio::net::TcpListener;
-use tokio::sync::broadcast::Sender;
 use tokio::sync::Mutex;
-
-use tokio_tungstenite::tungstenite::handshake::derive_accept_key;
-use tokio_tungstenite::tungstenite::protocol::{Message, Role};
-use tokio_tungstenite::WebSocketStream;
-
-use tracing::{debug, error, info, instrument, warn};
-
+use tokio::sync::broadcast::Sender;
+use tracing::{debug, error, info, instrument, trace, warn};
+use tracing_subscriber::FmtSubscriber;
 use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::fmt::time::ChronoUtc;
-use tracing_subscriber::FmtSubscriber;
 
 type Downstream = bars_protocol::Downstream<Value>;
 type Upstream = bars_protocol::Upstream<Value>;
@@ -72,7 +64,7 @@ impl Default for StateEntry {
 	fn default() -> Self {
 		Self {
 			aerodrome: Default::default(),
-			broadcast: Sender::new(16),
+			broadcast: Sender::new(1024),
 		}
 	}
 }
@@ -171,28 +163,59 @@ async fn handle(
 	config: &Config,
 	state: Arc<Mutex<State>>,
 ) -> Result<Response<String>> {
-	debug!("{} {}", req.method(), req.uri().path());
+	//debug!("{} {}", req.method(), req.uri().path());
+
+	let (controller, observer) = req
+		.headers()
+		.get("Authorization")
+		.and_then(|header| header.to_str().ok())
+		.and_then(|header| header.strip_prefix("Bearer "))
+		.map(|key| {
+			(
+				config.controller_keys.contains(key),
+				config.observer_keys.contains(key),
+			)
+		})
+		.unwrap_or_default();
 
 	Ok(match req.uri().path() {
+		"/" => {
+			debug!("{} /", req.method());
+
+			match std::fs::read_to_string("index.html") {
+				Ok(body) => Response::builder().body(body)?,
+				Err(err) => {
+					warn!("{err}");
+
+					Response::builder()
+						.status(StatusCode::NOT_FOUND)
+						.body("not found".into())?
+				},
+			}
+		},
+		"/auth/network-status" => {
+			debug!("{} /network-status", req.method());
+
+			Response::builder()
+				.header(header::CONTENT_TYPE, "application/json")
+				.body(serde_json::to_string(&json!({
+					"offline": !controller && !observer,
+				}))?)?
+		},
 		"/connect" => {
+			debug!("{} /connect", req.method());
+
 			let params = get_websocket_request(&req).zip(req.uri().query()).and_then(
 				|(accept_key, query)| {
 					let params = query
 						.split('&')
 						.filter_map(|tuple| tuple.split_once('='))
 						.collect::<HashMap<_, _>>();
-					params
-						.get("airport")
-						.copied()
-						.zip(params.get("key").copied())
-						.map(|params| (accept_key, params))
+					params.get("airport").map(|params| (accept_key, *params))
 				},
 			);
 
-			if let Some((accept_key, (icao, key))) = params {
-				let controller = config.controller_keys.contains(key);
-				let observer = config.observer_keys.contains(key);
-
+			if let Some((accept_key, icao)) = params {
 				if controller || observer {
 					let state = state.clone();
 					let icao = icao.to_string();
@@ -217,7 +240,7 @@ async fn handle(
 									state.clone()
 								};
 
-								let stream = TokioIo::new(stream);
+								let stream = TokioAdapter::new(TokioIo::new(stream));
 								let conn =
 									WebSocketStream::from_raw_socket(stream, Role::Server, None)
 										.await;
@@ -347,28 +370,23 @@ fn get_websocket_request(req: &Request<Incoming>) -> Option<String> {
 			.map(|v| v == "13")
 			.unwrap_or(false);
 
+	trace!("{req:?}");
+
 	is_websocket_request
 		.then(|| req.headers().get(header::SEC_WEBSOCKET_KEY))
 		.flatten()
 		.map(|key| derive_accept_key(key.as_bytes()))
 }
 
+type Stream = WebSocketStream<TokioAdapter<TokioIo<Upgraded>>>;
+
 #[instrument(skip_all)]
-async fn handle_socket<S>(
-	mut conn: WebSocketStream<S>,
+async fn handle_socket(
+	mut conn: Stream,
 	controller: Option<&String>,
 	state: StateEntry,
-) -> Result<()>
-where
-	S: AsyncRead + AsyncWrite + Unpin,
-{
-	async fn send<S>(
-		conn: &mut WebSocketStream<S>,
-		message: &Downstream,
-	) -> Result<()>
-	where
-		S: AsyncRead + AsyncWrite + Unpin,
-	{
+) -> Result<()> {
+	async fn send(conn: &mut Stream, message: &Downstream) -> Result<()> {
 		let message = serde_json::to_string(message).unwrap();
 		if let Err(err) = conn.send(message.into()).await {
 			error!("failed to send websocket message: {err}");
@@ -391,15 +409,15 @@ where
 			&mut conn,
 			&Downstream::InitialState {
 				connection_type: controller
-					.map(|_| "controller")
-					.unwrap_or("observer")
-					.into(),
+					.map(|_| ConnectionType::Controller)
+					.unwrap_or(ConnectionType::Observer),
 				scenery: aerodrome
 					.objects
 					.iter()
 					.map(|(id, state)| SceneryObject {
 						id: id.clone(),
 						state: *state,
+						timestamp: 0, // fixme
 					})
 					.collect(),
 				patch: aerodrome.state.clone(),
@@ -411,6 +429,8 @@ where
 	loop {
 		tokio::select! {
 			Ok(message) = rx.recv() => {
+				trace!("{controller:?} <- {message:?}");
+
 				send(&mut conn, &message).await?;
 			},
 			message = conn.next() => {
@@ -423,6 +443,8 @@ where
 
 							continue
 						};
+
+						trace!("{controller:?} -> {message:?}");
 
 						match (message, controller) {
 							(Upstream::Heartbeat, _) =>
@@ -452,6 +474,17 @@ where
 								let _ = tx.send(Downstream::SharedStateUpdate {
 									patch, controller_id: id.clone(),
 								});
+							},
+							(Upstream::MultiStateUpdate { updates }, Some(id)) => {
+								let mut aerodrome = state.aerodrome.lock().await;
+								for StateUpdate { object_id, state: os } in updates {
+									aerodrome.objects.insert(object_id.clone(), os);
+									let _ = tx.send(Downstream::StateUpdate {
+										object_id,
+										state: os,
+										controller_id: id.clone(),
+									});
+								}
 							},
 							_ => send(&mut conn, &Downstream::Error {
 								message: "invalid message".into(),

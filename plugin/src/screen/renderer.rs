@@ -13,6 +13,9 @@ use bars_config::{
 };
 use bars_euroscope::{MouseButton, MouseEvent, RadarScreen, SettingStore};
 use bars_graphics::{Alignment, Brush, Pen, Point, Rect, StringFormat, Style};
+use bars_ipc::ConnectionCapacity;
+
+use tracing::{debug, trace};
 
 const DESELECT_AFTER: Duration = Duration::from_secs(3);
 
@@ -24,6 +27,7 @@ pub struct Renderer {
 	view: Option<Ref<View>>,
 	transform: Transform,
 	styles: Vec<Style>,
+	capacity: ConnectionCapacity,
 }
 
 impl Renderer {
@@ -34,6 +38,7 @@ impl Renderer {
 			view: if geo { None } else { Some(0.into()) },
 			transform: Transform::new(),
 			styles: Vec::new(),
+			capacity: ConnectionCapacity::None,
 		}
 	}
 
@@ -43,6 +48,10 @@ impl Renderer {
 
 	pub fn view(&self) -> Option<Ref<View>> {
 		self.view
+	}
+
+	pub fn set_capacity(&mut self, capacity: ConnectionCapacity) {
+		self.capacity = capacity;
 	}
 
 	pub fn init(&mut self, ctx: &mut RadarScreen) {
@@ -100,6 +109,8 @@ impl Renderer {
 		aerodrome: &Aerodrome,
 		graphics: &GraphicsContext,
 	) {
+		debug!("backdrop refresh ({:?})", aerodrome.capacity());
+
 		let area = ctx.radar_area();
 
 		self.targets.reset(
@@ -158,21 +169,25 @@ impl Renderer {
 		paths: &[Path<T>],
 		targets: &[Target<T>],
 	) {
-		for path in paths {
-			if let PathDisplay::Fixed { style } = path.display {
-				let points = self.project_points(&path.points);
-				graphics
-					.graphics
-					.draw_polygon(&points, &self.styles[style.0]);
+		if self.capacity != ConnectionCapacity::None {
+			for path in paths {
+				if let PathDisplay::Fixed { style } = path.display {
+					let points = self.project_points(&path.points);
+					graphics
+						.graphics
+						.draw_polygon(&points, &self.styles[style.0]);
+				}
 			}
 		}
 
-		for target in targets {
-			// todo: filter commands referencing fixed blocks/nodes
+		if self.capacity == ConnectionCapacity::Control {
+			for target in targets {
+				// todo: filter commands referencing fixed blocks/nodes
 
-			for polygon in &target.polygons {
-				let points = self.project_points(&polygon);
-				self.targets.add_poly(target.command, &points);
+				for polygon in &target.polygons {
+					let points = self.project_points(&polygon);
+					self.targets.add_poly(target.command, &points);
+				}
 			}
 		}
 	}
@@ -183,13 +198,22 @@ impl Renderer {
 		aerodrome: &Aerodrome,
 		graphics: &GraphicsContext,
 	) {
-		if self.view.is_some() {
-			if let Some(map) = self.find_map(aerodrome) {
-				self.render_content(aerodrome, graphics, &map.paths, &map.widgets);
-			}
-		} else {
-			if let Some(map) = &aerodrome.config().geo_map {
-				self.render_content(aerodrome, graphics, &map.paths, &map.widgets);
+		trace!("refresh ({:?}, {})", aerodrome.capacity(), self.styles.len());
+
+		if self.styles.is_empty() {
+			// not yet initialised
+			return
+		}
+
+		if self.capacity != ConnectionCapacity::None {
+			if self.view.is_some() {
+				if let Some(map) = self.find_map(aerodrome) {
+					self.render_content(aerodrome, graphics, &map.paths, &map.widgets);
+				}
+			} else {
+				if let Some(map) = &aerodrome.config().geo_map {
+					self.render_content(aerodrome, graphics, &map.paths, &map.widgets);
+				}
 			}
 		}
 	}
@@ -278,7 +302,7 @@ impl Renderer {
 				} => {
 					if let Some(countdown) = aerodrome.countdown(target) {
 						let centre = position.transform(&self.transform);
-						let size = 1.5 * FONT_SIZE;
+						let size = 2.0 * FONT_SIZE;
 						let bbox = Rect {
 							x: centre.x - 0.5 * size,
 							y: centre.y - 0.5 * size,
@@ -291,7 +315,7 @@ impl Renderer {
 
 						let pen = Pen::new(
 							StrokeStyle::Dash(0),
-							StrokeWidth::from(2.0),
+							StrokeWidth::from(1.5),
 							StrokeCap(0),
 							StrokeJoin(2),
 							THEME_COLOR,
@@ -299,17 +323,17 @@ impl Renderer {
 						.unwrap();
 						graphics.graphics.draw_arc(
 							bbox,
-							90.0,
-							-360.0 * (1.0 - proportion),
+							-90.0,
+							-360.0 * proportion,
 							&pen,
 						);
 
 						let format =
 							StringFormat::new(Alignment::Center, Alignment::Center);
-						graphics.graphics.draw_string(
+						graphics.graphics.draw_string_rect(
 							&countdown.remaining().as_secs().to_string(),
 							&graphics.font,
-							centre,
+							bbox,
 							&format,
 							&graphics.brush,
 						);
@@ -321,7 +345,7 @@ impl Renderer {
 
 	pub fn mouse_event(
 		&mut self,
-		_ctx: &mut RadarScreen,
+		ctx: &mut RadarScreen,
 		mut aerodrome: AerodromeMut<'_>,
 		event: MouseEvent,
 		position: bars_euroscope::Point,
@@ -336,6 +360,8 @@ impl Renderer {
 		else {
 			return
 		};
+
+		ctx.request_refresh();
 
 		match event {
 			MouseEvent::Click(MouseButton::Left) => match command {

@@ -1,51 +1,6 @@
-use std::collections::HashMap;
-
 use serde::{Deserialize, Serialize};
 
 pub type NodeState = bool;
-
-#[derive(
-	Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum BlockState {
-	Clear,
-	Relax,
-	Route((String, String)),
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(default)]
-pub struct Patch {
-	pub profile: Option<String>,
-	pub nodes: HashMap<String, NodeState>,
-	pub blocks: HashMap<String, BlockState>,
-}
-
-impl Patch {
-	pub fn apply_patch(&mut self, patch: Patch) {
-		if let Some(profile) = patch.profile {
-			self.profile = Some(profile);
-		}
-
-		self.nodes.extend(patch.nodes.into_iter());
-		self.blocks.extend(patch.blocks.into_iter());
-	}
-
-	pub fn is_empty(&self) -> bool {
-		self.profile.is_none() && self.nodes.is_empty() && self.blocks.is_empty()
-	}
-}
-
-impl Default for Patch {
-	fn default() -> Self {
-		Self {
-			profile: None,
-			nodes: HashMap::new(),
-			blocks: HashMap::new(),
-		}
-	}
-}
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(
@@ -54,7 +9,7 @@ impl Default for Patch {
 	tag = "type",
 	content = "data"
 )]
-pub enum Upstream<P = Patch> {
+pub enum Upstream<P> {
 	Heartbeat,
 	#[serde(rename(serialize = "HEARTBEAT"))]
 	HeartbeatAck,
@@ -71,13 +26,14 @@ pub enum Upstream<P = Patch> {
 		#[serde(rename = "sharedStatePatch")]
 		patch: P,
 	},
+	GetOnlinePilots,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StateUpdate {
-	object_id: String,
-	state: bool,
+	pub object_id: String,
+	pub state: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -87,7 +43,7 @@ pub struct StateUpdate {
 	tag = "type",
 	content = "data"
 )]
-pub enum Downstream<P = Patch> {
+pub enum Downstream<P> {
 	Heartbeat,
 	HeartbeatAck,
 	Close,
@@ -124,6 +80,12 @@ pub enum Downstream<P = Patch> {
 		controllers: Vec<String>,
 		offline: bool,
 	},
+	StopbarCrossing {
+		object_id: String,
+	},
+	OnlinePilots {
+		pilots: Vec<Pilot>,
+	},
 	#[serde(other)]
 	Other,
 }
@@ -154,4 +116,10 @@ pub enum ConnectionType {
 	Pilot,
 	#[serde(other)]
 	Other,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Pilot {
+	pub cid: String,
+	pub callsign: String,
 }

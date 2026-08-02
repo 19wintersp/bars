@@ -8,14 +8,14 @@ use std::collections::{HashMap, HashSet};
 use std::mem::ManuallyDrop;
 use std::ops::{Deref, DerefMut};
 
-use bars_ipc::{ConnectionType, Downstream, Upstream};
+use bars_ipc::{ConnectionTarget, Downstream, Upstream};
 
 use tracing::{info, warn};
 
 pub struct Context {
 	client: Client,
 	client_state: ClientState,
-	network_state: ConnectionType,
+	network_state: ConnectionTarget,
 	subscriptions: HashMap<String, usize>,
 	pilots: HashSet<String>,
 	aerodromes: HashMap<String, Aerodrome>,
@@ -26,7 +26,7 @@ impl Context {
 		Self {
 			client: Client::new(),
 			client_state: ClientState::Connecting,
-			network_state: ConnectionType::None,
+			network_state: ConnectionTarget::None,
 			subscriptions: HashMap::new(),
 			pilots: HashSet::new(),
 			aerodromes: HashMap::new(),
@@ -45,8 +45,8 @@ impl Context {
 		});
 	}
 
-	pub fn connect_network(&self, capacity: ConnectionType) {
-		self.client.send(Upstream::Connect { capacity });
+	pub fn connect_network(&self, capacity: ConnectionTarget) {
+		self.client.send(Upstream::Connect { target: capacity });
 	}
 
 	pub fn subscribe(&mut self, aerodrome: &str, subscribe: bool) {
@@ -81,7 +81,7 @@ impl Context {
 		}
 	}
 
-	pub fn network_state(&self) -> ConnectionType {
+	pub fn network_state(&self) -> ConnectionTarget {
 		self.network_state
 	}
 
@@ -122,14 +122,23 @@ impl Context {
 						}
 					},
 					Downstream::UserMessage(message) => user_messages.push(message),
-					Downstream::Connection { capacity } => {
-						self.network_state = capacity;
+					Downstream::Connection { target } => {
+						self.network_state = target;
 					},
 					Downstream::OpenAerodrome { aerodrome, config } => {
 						self.aerodromes.insert(aerodrome, Aerodrome::new(config));
 					},
 					Downstream::CloseAerodrome { aerodrome } => {
 						self.aerodromes.remove(&aerodrome);
+					},
+					Downstream::AerodromeConnection {
+						aerodrome,
+						capacity,
+					} => {
+						self
+							.aerodromes
+							.get_mut(&aerodrome)
+							.map(|aerodrome| aerodrome.set_capacity(capacity));
 					},
 					Downstream::MapUpdate { aerodrome, update } => {
 						if let Some(aerodrome) = self.aerodromes.get_mut(&aerodrome) {
@@ -162,7 +171,7 @@ impl Context {
 	}
 
 	fn reset(&mut self) {
-		self.network_state = ConnectionType::None;
+		self.network_state = ConnectionTarget::None;
 		self.pilots.clear();
 		self.aerodromes.clear();
 	}

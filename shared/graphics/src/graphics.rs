@@ -129,20 +129,36 @@ impl Graphics {
 		format: &StringFormat,
 		brush: &Brush,
 	) {
+		self.draw_string_rect(
+			string,
+			font,
+			Rect {
+				x: origin.x,
+				y: origin.y,
+				w: 0.0,
+				h: 0.0,
+			},
+			format,
+			brush,
+		);
+	}
+
+	pub fn draw_string_rect(
+		&self,
+		string: &str,
+		font: &Font,
+		rect: Rect,
+		format: &StringFormat,
+		brush: &Brush,
+	) {
 		let string = WideString::new(string);
-		let rect = RectF {
-			X: origin.x,
-			Y: origin.y,
-			Width: 0.0,
-			Height: 0.0,
-		};
 
 		c!(GdipDrawString(
 			self.graphics,
 			string.pcwstr(),
 			-1,
 			font.0,
-			&rect,
+			&rect.into(),
 			format.0,
 			brush.0,
 		));

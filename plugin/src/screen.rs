@@ -22,8 +22,9 @@ use bars_euroscope::{
 	RadarScreen, RadarScreenHandler, RefreshPhase, ScreenObject, SettingStore,
 };
 use bars_graphics::{Brush, Font, FontFamily, Graphics};
+use bars_ipc::ConnectionCapacity;
 
-use tracing::debug;
+use tracing::{debug, warn};
 
 static FONT_FAMILY: &str = "EuroScope";
 const FONT_SIZE: f32 = 12.0;
@@ -59,22 +60,25 @@ impl ContextWrapper {
 		}
 	}
 
-	fn with_aerodrome(&self, f: impl FnOnce(&Aerodrome)) {
+	fn with_aerodrome<T>(&self, f: impl FnOnce(&Aerodrome) -> T) -> Option<T> {
 		let context = self.context.borrow();
 		self
 			.aerodrome
 			.as_ref()
 			.and_then(|aerodrome| context.aerodrome(aerodrome))
-			.map(f);
+			.map(f)
 	}
 
-	fn with_aerodrome_mut(&mut self, f: impl FnOnce(AerodromeMut<'_>)) {
+	fn with_aerodrome_mut<T>(
+		&mut self,
+		f: impl FnOnce(AerodromeMut<'_>) -> T,
+	) -> Option<T> {
 		let mut context = self.context.borrow_mut();
 		self
 			.aerodrome
 			.as_ref()
 			.and_then(|aerodrome| context.aerodrome_mut(aerodrome))
-			.map(f);
+			.map(f)
 	}
 }
 
@@ -94,7 +98,14 @@ pub struct Screen {
 	renderer: Renderer,
 	highlight: Highlight,
 	aerodrome_loaded: bool,
+	capacity_loaded: ConnectionCapacity,
 	profile_loaded: usize,
+	pending_call: Option<FunctionCall>,
+}
+
+struct FunctionCall {
+	function: TagFunction,
+	area: Area,
 }
 
 impl Screen {
@@ -114,7 +125,9 @@ impl Screen {
 			renderer: Renderer::new(geo),
 			highlight: Highlight::None,
 			aerodrome_loaded: false,
+			capacity_loaded: ConnectionCapacity::None,
 			profile_loaded: usize::MAX,
+			pending_call: None,
 		}
 	}
 
@@ -225,6 +238,12 @@ impl Screen {
 		selected: Option<usize>,
 		names: impl Iterator<Item = &'a str>,
 	) {
+		let mut names = names.peekable();
+		if names.peek().is_none() {
+			debug!("cancelling popup list {title:?} due empty");
+			return
+		}
+
 		let ctx = ctx.plugin();
 		ctx.open_popup_list(title, false, area);
 
@@ -261,6 +280,81 @@ impl Screen {
 			TagFunction::new(TagFunctionType::SetAerodrome, 0).into(),
 			area,
 		);
+	}
+
+	fn call_delayed(
+		&self,
+		ctx: &mut RadarScreen,
+		TagFunction { function, .. }: TagFunction,
+		area: Area,
+	) {
+		match function {
+			TagFunctionType::OpenProfileList => {
+				self.context.with_aerodrome(|aerodrome| {
+					if aerodrome.capacity() == ConnectionCapacity::Control {
+						self.open_list(
+							ctx,
+							area,
+							c"Set profile",
+							TagFunctionType::SetProfile,
+							Some(aerodrome.profile().0),
+							aerodrome
+								.config()
+								.config
+								.profiles
+								.iter()
+								.map(|profile| profile.name.as_str()),
+						);
+					}
+				});
+			},
+			TagFunctionType::OpenPresetList => {
+				self.context.with_aerodrome(|aerodrome| {
+					if aerodrome.capacity() == ConnectionCapacity::Control {
+						self.open_list(
+							ctx,
+							area,
+							c"Apply preset",
+							TagFunctionType::ApplyPreset,
+							None,
+							aerodrome
+								.config()
+								.config
+								.presets
+								.iter()
+								.filter_map(|preset| preset.name.as_ref())
+								.map(|name| name.as_str()),
+						);
+					}
+				});
+			},
+			TagFunctionType::OpenViewList => {
+				self.context.with_aerodrome(|aerodrome| {
+					self.open_list(
+						ctx,
+						area,
+						c"Set view",
+						TagFunctionType::SetView,
+						Some(self.renderer.view().map(|r| r.0).unwrap_or_default()),
+						aerodrome
+							.config()
+							.maps
+							.iter()
+							.flat_map(|map| map.views.iter())
+							.map(|view| view.name.as_str()),
+					);
+				});
+			},
+			TagFunctionType::OpenHighlightList => self.open_list(
+				ctx,
+				area,
+				c"Set highlight",
+				TagFunctionType::SetHighlight,
+				Some(self.highlight.into()),
+				Highlight::ALL.iter().map(|highlight| highlight.name()),
+			),
+			function => warn!("unhandled delayed call for {function:?}"),
+		}
 	}
 
 	fn render_highlights(&self, ctx: &mut RadarScreen) {
@@ -332,6 +426,10 @@ impl RadarScreenHandler for Screen {
 					if !self.aerodrome_loaded {
 						self.aerodrome_loaded = true;
 						ctx.request_backdrop_refresh();
+					} else if self.capacity_loaded != aerodrome.capacity() {
+						self.capacity_loaded = aerodrome.capacity();
+						self.renderer.set_capacity(aerodrome.capacity());
+						ctx.request_backdrop_refresh();
 					} else if self.profile_loaded != aerodrome.profile().0 {
 						self.profile_loaded = aerodrome.profile().0;
 						ctx.request_backdrop_refresh();
@@ -341,11 +439,22 @@ impl RadarScreenHandler for Screen {
 				});
 			},
 			RefreshPhase::AfterTags => {
-				if self.context.aerodrome.is_some() {
+				if self
+					.context
+					.with_aerodrome(|aerodrome| aerodrome.capacity())
+					.is_some_and(|capacity| capacity != ConnectionCapacity::None)
+				{
 					self.render_highlights(ctx);
 				}
 			},
 			RefreshPhase::AfterLists => {
+				self.button.set_state(
+					self.context.context.borrow().network_state(),
+					self
+						.context
+						.with_aerodrome(|aerodrome| aerodrome.capacity())
+						.unwrap_or(ConnectionCapacity::None),
+				);
 				self.button.render(ctx, &self.graphics);
 
 				ctx.add_screen_object(
@@ -357,6 +466,10 @@ impl RadarScreenHandler for Screen {
 					true,
 					c"BARS menu",
 				);
+
+				if let Some(call) = self.pending_call.take() {
+					self.call_delayed(ctx, call.function, call.area);
+				}
 			},
 		}
 	}
@@ -389,7 +502,7 @@ impl RadarScreenHandler for Screen {
 			ObjectGroup::Button => match event {
 				MouseEvent::Click(_) => {
 					let area = self.button.area();
-					if self.context.aerodrome.is_some() {
+					if self.context.with_aerodrome(|_| ()).is_some() {
 						self.open_menu(ctx, area);
 					} else {
 						self.open_aerodrome_input(ctx, area);
@@ -415,73 +528,22 @@ impl RadarScreenHandler for Screen {
 			return
 		};
 
-		debug!("tag function {code} called");
+		debug!("tag function {code:08x} called");
 
 		match function {
 			TagFunctionType::Max => unreachable!(),
 			TagFunctionType::OpenAerodromeInput => {
 				self.open_aerodrome_input(ctx, area);
 			},
-			TagFunctionType::OpenProfileList => {
-				self.context.with_aerodrome(|aerodrome| {
-					self.open_list(
-						ctx,
-						area,
-						c"Set profile",
-						TagFunctionType::SetProfile,
-						Some(aerodrome.profile().0),
-						aerodrome
-							.config()
-							.config
-							.profiles
-							.iter()
-							.map(|profile| profile.name.as_str()),
-					);
-				})
+			TagFunctionType::OpenProfileList
+			| TagFunctionType::OpenPresetList
+			| TagFunctionType::OpenViewList
+			| TagFunctionType::OpenHighlightList => {
+				self.pending_call = Some(FunctionCall {
+					function: TagFunction { function, index },
+					area,
+				});
 			},
-			TagFunctionType::OpenPresetList => {
-				self.context.with_aerodrome(|aerodrome| {
-					self.open_list(
-						ctx,
-						area,
-						c"Apply preset",
-						TagFunctionType::ApplyPreset,
-						None,
-						aerodrome
-							.config()
-							.config
-							.presets
-							.iter()
-							.filter_map(|preset| preset.name.as_ref())
-							.map(|name| name.as_str()),
-					);
-				})
-			},
-			TagFunctionType::OpenViewList => {
-				self.context.with_aerodrome(|aerodrome| {
-					self.open_list(
-						ctx,
-						area,
-						c"Set view",
-						TagFunctionType::SetView,
-						Some(self.renderer.view().map(|r| r.0).unwrap_or_default()),
-						aerodrome
-							.config()
-							.maps
-							.iter()
-							.flat_map(|map| map.views.iter())
-							.map(|view| view.name.as_str()),
-					);
-				})
-			},
-			TagFunctionType::OpenHighlightList => self.open_list(
-				ctx,
-				area,
-				c"Set highlight",
-				TagFunctionType::SetHighlight,
-				Some(self.highlight.into()),
-				Highlight::ALL.iter().map(|highlight| highlight.name()),
-			),
 			TagFunctionType::SetAerodrome => {
 				let aerodrome = string
 					.map(|s| s.to_string_lossy().into_owned())

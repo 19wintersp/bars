@@ -10,7 +10,7 @@ use bars_euroscope::{
 	ConnectionType, DisplayTypeOptions, FlightPlan, Plugin as PluginContext,
 	PluginHandler, RadarScreen, RadarTarget, TagContent,
 };
-use bars_ipc::ConnectionType as NetworkConnection;
+use bars_ipc::ConnectionTarget as NetworkConnection;
 
 const DISPLAY_TYPE_NAME: &CStr = c"Lighting Control Panel";
 
@@ -84,10 +84,8 @@ impl PluginHandler for Plugin {
 					let context = self.context.borrow();
 
 					let connection = match context.network_state() {
-						NetworkConnection::None => NetworkConnection::Control,
-						NetworkConnection::Control | NetworkConnection::Observe => {
-							NetworkConnection::None
-						},
+						NetworkConnection::None => NetworkConnection::Network,
+						NetworkConnection::Network => NetworkConnection::None,
 					};
 					context.connect_network(connection);
 				},
@@ -171,7 +169,7 @@ impl PluginHandler for Plugin {
 			self
 				.context
 				.borrow()
-				.connect_network(NetworkConnection::Control);
+				.connect_network(NetworkConnection::Network);
 		}
 
 		if state.client_state == ClientState::Disconnected {

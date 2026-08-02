@@ -1,11 +1,13 @@
 macro_rules! mangled_name {
-	( $class:ident::$member:ident ) => {
+	($class:ident$(::$member:ident)?) => {
 		include!(concat!(
 			env!("OUT_DIR"),
 			"/mangled-name/",
 			stringify!($class),
-			"_",
-			stringify!($member),
+			$(
+				"_",
+				stringify!($member),
+			)?
 		))
 	};
 }
@@ -134,13 +136,19 @@ pub enum MouseButton {
 }
 
 #[macro_export]
+macro_rules! export_name {
+	(init) => { "?EuroScopePlugInInit@@YAXPAPAVCPlugIn@EuroScopePlugIn@@@Z" };
+	(exit) => { "?EuroScopePlugInExit@@YAXXZ" };
+}
+
+#[macro_export]
 macro_rules! export {
 	( $init:path $(, $exit:path)? $(,)? ) => {
 		static mut _BARS_EUROSCOPE: ::std::option::Option<
 			$crate::ExportContext,
 		> = ::std::option::Option::None;
 
-		#[unsafe(export_name = "?EuroScopePlugInInit@@YAXPAPAVCPlugIn@EuroScopePlugIn@@@Z")]
+		#[unsafe(export_name = $crate::export_name!(init))]
 		unsafe extern "C" fn _bars_euroscope_init(
 			pointer: *mut *mut ::std::ffi::c_void,
 		) {
@@ -150,7 +158,7 @@ macro_rules! export {
 			}
 		}
 
-		#[unsafe(export_name = "?EuroScopePlugInExit@@YAXXZ")]
+		#[unsafe(export_name = $crate::export_name!(exit))]
 		unsafe extern "C" fn _bars_euroscope_exit() {
 			unsafe { _BARS_EUROSCOPE.take() };
 			$( $exit(); )?

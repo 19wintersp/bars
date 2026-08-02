@@ -2,10 +2,11 @@ mod context;
 mod plugin;
 mod screen;
 
-use std::ffi::CStr;
+use std::ffi::{CStr, c_void};
 
 use bars_config::Color;
 use bars_euroscope::{ExportContext, Plugin, PluginOptions};
+use bars_platform::api::InitContext;
 
 const PLUGIN_OPTIONS: PluginOptions<'_> = PluginOptions {
 	name: c"BARS",
@@ -37,3 +38,20 @@ fn exit() {
 }
 
 bars_euroscope::export!(init, exit);
+
+#[unsafe(export_name = bars_platform::api_export_name!(init))]
+unsafe extern "C" fn api_init(plugin: *mut *mut c_void, _: *const InitContext) {
+	unsafe {
+		_bars_euroscope_init(plugin);
+	}
+}
+
+#[unsafe(export_name = bars_platform::api_export_name!(exit))]
+unsafe extern "C" fn api_exit() {
+	unsafe {
+		_bars_euroscope_exit();
+	}
+}
+
+const _: bars_platform::api::Init = api_init;
+const _: bars_platform::api::Exit = api_exit;

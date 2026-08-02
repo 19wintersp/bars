@@ -1,34 +1,37 @@
 use super::{FONT_SIZE, GraphicsContext};
 
-use bars_config::{Color, FillStyle};
+use bars_config::{
+	Color, FillStyle, StrokeCap, StrokeJoin, StrokeStyle, StrokeWidth,
+};
 use bars_euroscope::{Area, MouseEvent, Point, RadarScreen, SettingStore};
-use bars_graphics::{Alignment, Brush, Rect, StringFormat};
+use bars_graphics::{Alignment, Brush, Pen, Rect, StringFormat};
+use bars_ipc::{ConnectionCapacity, ConnectionTarget};
 
-const PADDING: f32 = FONT_SIZE / 4.0;
+const PADDING: f32 = 0.2 * FONT_SIZE;
+const GLYPH_SIZE: f32 = 0.5 * FONT_SIZE;
 
-const BG_COLOR: Color = Color {
-	r: 0x00,
-	g: 0x00,
-	b: 0x00,
-	a: 0xff,
-};
-const FG_COLOR: Color = Color {
-	r: 0xff,
-	g: 0xff,
-	b: 0xff,
-	a: 0xff,
-};
+const WHITE: Color = color(0xff, 0xff, 0xff);
+
+static DISCONNECTED_GLYPH: &[(f32, f32)] =
+	&[(0.0, 0.0), (1.0, 1.0), (0.5, 0.5), (0.0, 1.0), (1.0, 0.0)];
+static CONNECTED_GLYPH: &[(f32, f32)] = &[(0.0, 0.0), (0.5, 1.0), (1.0, 0.0)];
 
 static SETTING_KEY_X: &str = "menuX";
 static SETTING_KEY_Y: &str = "menuY";
+
+const fn color(r: u8, g: u8, b: u8) -> Color {
+	Color { r, g, b, a: 0xff }
+}
 
 pub struct Button {
 	position: (f32, f32),
 	area: Area,
 	aerodrome: Option<String>,
-	bg_brush: Brush,
-	fg_brush: Brush,
+	network: ConnectionTarget,
+	capacity: ConnectionCapacity,
 	drag_offset: Option<(i32, i32)>,
+	white_brush: Brush,
+	white_pen: Pen,
 }
 
 impl Button {
@@ -42,14 +45,32 @@ impl Button {
 				bottom: 0,
 			},
 			aerodrome: None,
-			bg_brush: Brush::new(FillStyle::Fill, BG_COLOR).unwrap(),
-			fg_brush: Brush::new(FillStyle::Fill, FG_COLOR).unwrap(),
+			network: ConnectionTarget::None,
+			capacity: ConnectionCapacity::None,
 			drag_offset: None,
+			white_brush: Brush::new(FillStyle::Fill, WHITE).unwrap(),
+			white_pen: Pen::new(
+				StrokeStyle::Dash(0),
+				StrokeWidth::from(1.0),
+				StrokeCap(0),
+				StrokeJoin(0),
+				WHITE,
+			)
+			.unwrap(),
 		}
 	}
 
 	pub fn set_aerodrome(&mut self, aerodrome: &Option<String>) {
 		self.aerodrome = aerodrome.clone();
+	}
+
+	pub fn set_state(
+		&mut self,
+		network: ConnectionTarget,
+		capacity: ConnectionCapacity,
+	) {
+		self.network = network;
+		self.capacity = capacity;
 	}
 
 	pub fn init(&mut self, ctx: &mut RadarScreen) {
@@ -77,7 +98,10 @@ impl Button {
 			bars_graphics::Point { x: 0.0, y: 0.0 },
 			&format,
 		);
-		let size = (bbox.w + 2.0 * PADDING, FONT_SIZE + 2.0 * PADDING);
+		let size = (
+			bbox.w + FONT_SIZE + 3.0 * PADDING,
+			FONT_SIZE + 2.0 * PADDING,
+		);
 
 		let radar_area = ctx.radar_area();
 		let area_size = (
@@ -97,6 +121,27 @@ impl Button {
 			bottom: (origin.1 + size.1) as i32,
 		};
 
+		let bg_brush = Brush::new(
+			FillStyle::Fill,
+			match self.capacity {
+				ConnectionCapacity::None => color(0x26, 0x26, 0x26),
+				ConnectionCapacity::Observe => color(0x37, 0x30, 0xa3),
+				ConnectionCapacity::Control => color(0x06, 0x4e, 0x3b),
+			},
+		)
+		.unwrap();
+
+		let glyph = match self.network {
+			ConnectionTarget::None => DISCONNECTED_GLYPH,
+			ConnectionTarget::Network => CONNECTED_GLYPH,
+		}
+		.iter()
+		.map(|(rx, ry)| bars_graphics::Point {
+			x: origin.0 + PADDING + GLYPH_SIZE * rx + 0.5 * (FONT_SIZE - GLYPH_SIZE),
+			y: origin.1 + PADDING + GLYPH_SIZE * ry + 0.5 * (FONT_SIZE - GLYPH_SIZE),
+		})
+		.collect::<Vec<_>>();
+
 		graphics.graphics.draw_rectangle(
 			Rect {
 				x: origin.0,
@@ -104,18 +149,19 @@ impl Button {
 				w: size.0,
 				h: size.1,
 			},
-			&self.bg_brush,
+			&bg_brush,
 		);
 		graphics.graphics.draw_string(
 			string,
 			&graphics.font,
 			bars_graphics::Point {
-				x: origin.0 + PADDING,
+				x: origin.0 + FONT_SIZE + 2.0 * PADDING,
 				y: origin.1 + 0.5 * size.1,
 			},
 			&format,
-			&self.fg_brush,
+			&self.white_brush,
 		);
+		graphics.graphics.draw_polygon(&glyph, &self.white_pen);
 	}
 
 	pub fn mouse_event(
@@ -132,7 +178,7 @@ impl Button {
 		let radar_area = ctx.radar_area();
 		let area_size = (
 			(radar_area.right - radar_area.left - size.0) as f32 - 2.0 * PADDING,
-			(radar_area.top - radar_area.bottom - size.1) as f32 - 2.0 * PADDING,
+			(radar_area.bottom - radar_area.top - size.1) as f32 - 2.0 * PADDING,
 		);
 
 		let offset = *self.drag_offset.get_or_insert_with(|| {
@@ -143,7 +189,10 @@ impl Button {
 			(position.y - offset.1 - radar_area.top) as f32 - PADDING,
 		);
 
-		self.position = (position.0 / area_size.0, position.1 / area_size.1);
+		self.position = (
+			(position.0 / area_size.0).clamp(0.0, 1.0),
+			(position.1 / area_size.1).clamp(0.0, 1.0),
+		);
 
 		if event == MouseEvent::DragEnd {
 			self.drag_offset = None;

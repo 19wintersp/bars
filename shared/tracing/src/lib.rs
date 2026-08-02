@@ -1,4 +1,5 @@
 use std::fs::File;
+use std::io::IsTerminal;
 use std::path::Path;
 use std::time::Duration;
 
@@ -8,6 +9,7 @@ use tracing::{debug, error, info, instrument, warn};
 use tracing_subscriber::FmtSubscriber;
 use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::fmt::time::ChronoUtc;
+use tracing_subscriber::fmt::writer::Tee;
 
 static FILE_SUFFIX: &str = ".log";
 
@@ -32,11 +34,17 @@ pub fn init(prefix: &str) -> Result<()> {
 		.with_max_level(max_level)
 		.with_target(true)
 		.with_thread_names(true)
-		.with_timer(ChronoUtc::new("%T%.3fZ".into()))
-		.with_writer(file)
-		.finish();
+		.with_timer(ChronoUtc::new("%T%.3fZ".into()));
 
-	tracing::subscriber::set_global_default(subscriber)?;
+	if std::io::stderr().is_terminal() {
+		tracing::subscriber::set_global_default(
+			subscriber.with_writer(Tee::new(file, std::io::stderr)).finish(),
+		)?;
+	} else {
+		tracing::subscriber::set_global_default(
+			subscriber.with_writer(file).finish(),
+		)?;
+	}
 
 	info!("logging initialised");
 
@@ -83,7 +91,9 @@ fn prune_log_files(dir: &Path) -> Result<()> {
 
 fn set_panic_hook() {
 	debug!("setting panic hook");
-	std::panic::set_hook(Box::new(|info| {
+
+	let default_hook = std::panic::take_hook();
+	std::panic::set_hook(Box::new(move |info| {
 		let location = info.location().unwrap();
 		let location = format!("{}:{}", location.file(), location.line());
 
@@ -96,5 +106,7 @@ fn set_panic_hook() {
 		} else {
 			tracing::error!("panic at {location}");
 		}
+
+		default_hook(&info);
 	}));
 }

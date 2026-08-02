@@ -5,7 +5,7 @@ use std::time::{Duration, Instant, SystemTime};
 use bars_config::{
 	Aerodrome, Bind, BindCondition, BindDependency, Block, BlockCondition,
 	BlockNode, BlockRoute, BlockState, Node, NodeCondition, Preset, Profile, Ref,
-	ResetTarget, State,
+	ResetCondition, ResetTarget, State,
 };
 
 #[cfg(feature = "serde")]
@@ -88,6 +88,10 @@ pub struct Patch {
 impl Patch {
 	pub fn is_empty(&self) -> bool {
 		self.profile.is_none() && self.nodes.is_empty() && self.blocks.is_empty()
+	}
+
+	pub fn is_valid_initial(&self) -> bool {
+		self.profile.is_some()
 	}
 }
 
@@ -423,7 +427,20 @@ impl Graph<'_> {
 			}
 		}
 
-		self.map_updates.push(MapUpdate::Profile {
+		self.map_updates.push(self.profile_map_update());
+
+		for i in 0..self.config.nodes.len() {
+			self.invalidate_node(i.into());
+		}
+		for i in 0..self.config.binds.len() {
+			self.invalidate_bind(i.into());
+		}
+	}
+
+	fn profile_map_update(&self) -> MapUpdate {
+		let profile = &self.config.profiles[self.profile.0];
+
+		MapUpdate::Profile {
 			profile: self.profile,
 			nodes: profile
 				.nodes
@@ -455,13 +472,6 @@ impl Graph<'_> {
 					},
 				})
 				.collect(),
-		});
-
-		for i in 0..self.config.nodes.len() {
-			self.invalidate_node(i.into());
-		}
-		for i in 0..self.config.binds.len() {
-			self.invalidate_bind(i.into());
 		}
 	}
 
@@ -502,6 +512,10 @@ impl Graph<'_> {
 					self.set_node_state(i.into(), State::On);
 				}
 			}
+		}
+
+		for i in 0..self.config.binds.len() {
+			self.invalidate_bind_dependents(i.into());
 		}
 	}
 
@@ -788,7 +802,9 @@ impl Graph<'_> {
 
 		self.nodes[node.0].state.set(
 			state,
-			timeout.map(|timeout| Instant::now() + timeout),
+			timeout
+				.filter(|duration| !duration.is_zero())
+				.map(|timeout| Instant::now() + timeout),
 			self.serial,
 		);
 		if let Some(timeout) = timeout {
@@ -832,7 +848,9 @@ impl Graph<'_> {
 
 		self.blocks[block.0].state.set(
 			state,
-			timeout.map(|timeout| Instant::now() + timeout),
+			timeout
+				.filter(|duration| !duration.is_zero())
+				.map(|timeout| Instant::now() + timeout),
 			self.serial,
 		);
 		if let Some(timeout) = timeout {
@@ -1052,10 +1070,11 @@ impl Graph<'_> {
 			.iter()
 			.filter(|timeout| {
 				match timeout {
-					ResetTarget::Node(node) => self.nodes[node.0].state.timeout,
-					ResetTarget::Block(block) => self.blocks[block.0].state.timeout,
+					ResetTarget::Node(node) => &mut self.nodes[node.0].state.timeout,
+					ResetTarget::Block(block) => &mut self.blocks[block.0].state.timeout,
 				}
-				.is_some_and(|t| t < Instant::now())
+				.take_if(|t| *t < Instant::now())
+				.is_some()
 			})
 			.copied()
 			.collect::<Vec<_>>();
@@ -1151,9 +1170,66 @@ impl Graph<'_> {
 	}
 
 	pub fn initial_map_updates(&self) -> Vec<MapUpdate> {
-		todo!(
-			"send Profile and Countdown messages as required, as in profile_changed"
-		)
+		let now = Instant::now();
+		let profile = &self.config.profiles[self.profile.0];
+
+		[self.profile_map_update()]
+			.into_iter()
+			.chain(
+				self
+					.nodes_cache
+					.iter()
+					.copied()
+					.enumerate()
+					.map(|(i, state)| MapUpdate::NodeState {
+						node: i.into(),
+						state,
+					}),
+			)
+			.chain(
+				self
+					.binds_cache
+					.iter()
+					.copied()
+					.enumerate()
+					.map(|(i, state)| MapUpdate::BindState {
+						bind: i.into(),
+						state,
+					}),
+			)
+			.chain(
+				self
+					.timeouts
+					.iter()
+					.copied()
+					.filter_map(|target| {
+						match target {
+							ResetTarget::Node(node) => self.nodes[node.0].state.timeout,
+							ResetTarget::Block(block) => self.blocks[block.0].state.timeout,
+						}
+						.filter(|timeout| timeout > &now)
+						.map(|timeout| (target, timeout))
+					})
+					.map(|(target, timeout)| MapUpdate::Countdown {
+						target,
+						length: Duration::from_secs(match target {
+							ResetTarget::Node(node) => match profile.nodes[node.0] {
+								NodeCondition::Direct {
+									reset: ResetCondition { timeout, .. },
+								} => timeout,
+								_ => 0,
+							},
+							ResetTarget::Block(block) => match profile.blocks[block.0] {
+								BlockCondition::Router {
+									reset: ResetCondition { timeout, .. },
+								} => timeout,
+								_ => 0,
+							},
+						} as u64),
+						finish: SystemTime::now() + (timeout - now),
+					}),
+			)
+			.collect()
 	}
 }
 

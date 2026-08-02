@@ -1,4 +1,4 @@
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 #[repr(u16)]
 pub enum TagFunctionType {
 	OpenAerodromeInput,

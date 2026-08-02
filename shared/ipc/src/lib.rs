@@ -23,7 +23,7 @@ pub enum Upstream {
 		token: Option<String>,
 	},
 	Connect {
-		capacity: ConnectionType,
+		target: ConnectionTarget,
 	},
 	Subscribe {
 		aerodrome: String,
@@ -49,7 +49,7 @@ pub enum Downstream {
 	Hello,
 	UserMessage(String),
 	Connection {
-		capacity: ConnectionType,
+		target: ConnectionTarget,
 	},
 	OpenAerodrome {
 		aerodrome: String,
@@ -57,6 +57,10 @@ pub enum Downstream {
 	},
 	CloseAerodrome {
 		aerodrome: String,
+	},
+	AerodromeConnection {
+		aerodrome: String,
+		capacity: ConnectionCapacity,
 	},
 	MapUpdate {
 		aerodrome: String,
@@ -70,11 +74,19 @@ pub enum Downstream {
 #[derive(
 	Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize,
 )]
-pub enum ConnectionType {
+pub enum ConnectionTarget {
+	None,
+	Network,
+	//Local,
+}
+
+#[derive(
+	Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize,
+)]
+pub enum ConnectionCapacity {
 	None,
 	Observe,
 	Control,
-	//Local,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

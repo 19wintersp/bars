@@ -6,11 +6,12 @@ use bars_graph::{
 	MapState, MapUpdate, MapUpdateBindCondition, MapUpdateBlockCondition,
 	MapUpdateNodeCondition,
 };
-use bars_ipc::{AerodromeConfig, GraphAction};
+use bars_ipc::{AerodromeConfig, ConnectionCapacity, GraphAction};
 
 pub struct Aerodrome {
 	config: AerodromeConfig,
 	profile: AerodromeProfile,
+	capacity: ConnectionCapacity,
 	nodes: Vec<MapState>,
 	binds: Vec<MapState>,
 	countdowns: HashMap<ResetTarget, Countdown>,
@@ -38,12 +39,21 @@ impl Aerodrome {
 				blocks: vec![Default::default(); config.config.blocks.len()],
 				binds: vec![Default::default(); config.config.binds.len()],
 			},
+			capacity: ConnectionCapacity::None,
 			nodes: vec![state; config.config.nodes.len()],
 			binds: vec![state; config.config.binds.len()],
 			countdowns: HashMap::new(),
 			actions: Vec::new(),
 			config,
 		}
+	}
+
+	pub fn capacity(&self) -> ConnectionCapacity {
+		self.capacity
+	}
+
+	pub fn set_capacity(&mut self, capacity: ConnectionCapacity) {
+		self.capacity = capacity;
 	}
 
 	pub fn config(&self) -> &AerodromeConfig {
@@ -138,6 +148,7 @@ impl Aerodrome {
 					.ok()
 					.and_then(|duration| Instant::now().checked_add(duration))
 				else {
+					self.countdowns.remove(&target);
 					return
 				};
 				self.countdowns.insert(target, Countdown { finish, length });

@@ -1,4 +1,5 @@
 use std::net::Ipv4Addr;
+use std::time::Duration;
 
 use bars_ipc::tcp::Channel;
 use bars_ipc::{Downstream, Upstream};
@@ -102,6 +103,8 @@ async fn worker(
 			}
 		}
 	}
+
+	tokio::time::sleep(Duration::from_secs(1)).await;
 
 	let (channel_rx, channel_tx) =
 		Channel::connect((Ipv4Addr::LOCALHOST, bars_ipc::PORT))
