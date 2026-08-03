@@ -15,6 +15,10 @@ bars-tracing.workspace = true
 anyhow.workspace = true
 libloading.workspace = true
 tracing.workspace = true
+windows = {
+	workspace = true,
+	features = ["Win32_Security", "Win32_System_Threading"],
+}
 
 [lib]
 crate-type = ["cdylib"]

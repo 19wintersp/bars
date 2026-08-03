@@ -1,13 +1,18 @@
 use std::ffi::c_void;
+use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
 
+use bars_platform::NAMESPACE;
 use bars_platform::api::{COMPATIBILITY, Exit, Init, InitContext, Version};
 
 use anyhow::{Result, anyhow};
 use bars_platform::api_export_name;
 use libloading::Library;
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
+use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError};
+use windows::Win32::System::Threading::{CREATE_NO_WINDOW, CreateEventA};
+use windows::core::PCSTR;
 
 static INIT_CONTEXT: InitContext = InitContext {
 	version: Version {
@@ -41,8 +46,21 @@ unsafe extern "C" fn euroscope_init(pointer: *mut *mut c_void) {
 		},
 	};
 
+	debug!("creating lock handle");
+	let lock_name = format!("Global\\{NAMESPACE}.loader.lock\0");
+	unsafe {
+		if CreateEventA(None, false, false, PCSTR(lock_name.as_ptr())).is_err() {
+			warn!("failed to create lock");
+		} else if GetLastError() == ERROR_ALREADY_EXISTS {
+			debug!("lock exists already");
+		}
+	}
+
 	debug!("starting server");
-	if let Err(err) = Command::new(server_path).spawn() {
+	if let Err(err) = Command::new(server_path)
+		.creation_flags(CREATE_NO_WINDOW.0)
+		.spawn()
+	{
 		error!("failed to spawn server: {err}");
 		return
 	}
@@ -86,7 +104,7 @@ fn find_binaries() -> Result<(PathBuf, PathBuf)> {
 	let find = |prefix: &str, suffix: &str, fallback: &[u8]| -> Result<PathBuf> {
 		let file = files
 			.iter()
-			.rfind(|name| name.starts_with(prefix) && name.ends_with(prefix));
+			.rfind(|name| name.starts_with(prefix) && name.ends_with(suffix));
 		let path = dir.join(
 			file
 				.cloned()
