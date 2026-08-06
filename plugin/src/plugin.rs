@@ -70,17 +70,24 @@ impl PluginHandler for Plugin {
 		let command = command.to_string_lossy();
 		let parts = command.trim().split_ascii_whitespace().collect::<Vec<_>>();
 
-		if let Some(&".bars") = parts.get(0) {
-			match parts.get(1) {
-				None => ctx.display_basic_message(concat!(
+		if parts
+			.get(0)
+			.is_some_and(|s| s.eq_ignore_ascii_case(".bars"))
+		{
+			let part = parts.get(1).map(|part| part.to_ascii_lowercase());
+			match part.as_ref().map(|part| part.as_str()) {
+				None | Some("help") => ctx.display_basic_message(
+					"Available commands: auth, connect, start, version",
+				),
+				Some("version") => ctx.display_basic_message(concat!(
 					env!("CARGO_PKG_NAME"),
 					" ",
 					env!("CARGO_PKG_VERSION")
 				)),
-				Some(&"auth") => {
+				Some("auth") => {
 					self.context.borrow().authenticate(parts.get(2).map(|s| *s));
 				},
-				Some(&"connect") => {
+				Some("connect") => {
 					let context = self.context.borrow();
 
 					let connection = match context.network_state() {
@@ -89,10 +96,10 @@ impl PluginHandler for Plugin {
 					};
 					context.connect_network(connection);
 				},
-				Some(&"local") => {
+				Some("local") => {
 					ctx.display_basic_message("Not yet implemented");
 				},
-				Some(&"start") => {
+				Some("start") => {
 					self.context.borrow_mut().connect();
 				},
 				Some(other) => ctx.display_basic_message(&format!(

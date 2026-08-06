@@ -22,22 +22,22 @@ pub struct ConnectionChanged(pub ConnectionTarget);
 
 pub struct ConnectionManager {
 	api: Addr<ApiManager>,
-	capacity: ConnectionTarget,
+	target: ConnectionTarget,
 }
 
 impl ConnectionManager {
 	pub fn new(api: Addr<ApiManager>) -> Addr<Self> {
 		let this = Self {
 			api,
-			capacity: ConnectionTarget::None,
+			target: ConnectionTarget::None,
 		};
 		Self::start_in_arbiter(&Arbiter::current(), |_ctx| this)
 	}
 
-	fn set_capacity(&mut self, capacity: ConnectionTarget) {
-		if capacity != self.capacity {
-			self.capacity = capacity;
-			self.issue_system_async(ConnectionChanged(capacity));
+	fn set_target(&mut self, target: ConnectionTarget) {
+		if target != self.target {
+			self.target = target;
+			self.issue_system_async(ConnectionChanged(target));
 		}
 	}
 }
@@ -54,7 +54,7 @@ impl Handler<GetConnection> for ConnectionManager {
 		_: GetConnection,
 		_: &mut Self::Context,
 	) -> Self::Result {
-		MessageResult(self.capacity)
+		MessageResult(self.target)
 	}
 }
 
@@ -63,17 +63,17 @@ impl Handler<RequestConnection> for ConnectionManager {
 
 	fn handle(
 		&mut self,
-		RequestConnection(capacity): RequestConnection,
+		RequestConnection(target): RequestConnection,
 		ctx: &mut Self::Context,
 	) {
-		match capacity {
-			ConnectionTarget::None => self.set_capacity(ConnectionTarget::None),
+		match target {
+			ConnectionTarget::None => self.set_target(ConnectionTarget::None),
 			ConnectionTarget::Network => {
 				ctx.spawn(self.api.send(FetchIsOnline).into_actor(self).map(
 					|res, this, _ctx| {
 						let message = match res.map_err(|err| err.into()).flatten() {
 							Ok(true) => {
-								this.set_capacity(ConnectionTarget::Network);
+								this.set_target(ConnectionTarget::Network);
 								return
 							},
 							Ok(false) => "Failed to connect: not connected to VATSIM".into(),

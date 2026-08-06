@@ -13,6 +13,7 @@ members = [
 	"shared/platform/",
 	"shared/protocol/",
 	"shared/tracing/",
+	"shared/update/",
 
 	"tool/dump-config/",
 	"tool/server/",
@@ -34,6 +35,7 @@ bars-ipc = { path = "shared/ipc/" }
 bars-platform = { path = "shared/platform/" }
 bars-protocol = { path = "shared/protocol/" }
 bars-tracing = { path = "shared/tracing/" }
+bars-update = { path = "shared/update/" }
 
 actix = "0.13"
 actix-broker = "0.4"
@@ -56,6 +58,7 @@ hyper-util = "0.1"
 kml = "0.8"
 kurbo = "0.11"
 libloading = "0.9"
+lzma-rust2 = { version = "0.18", default-features = false }
 ouroboros = "0.18"
 postcard = "1.1"
 rand = "0.10"
@@ -63,6 +66,7 @@ reqwest = { version = "0.12", default-features = false }
 serde = "1.0"
 serde_json = "1.0"
 syn = "2.0"
+tar = "0.4"
 tokio = "1.43"
 tokio-tungstenite = "0.27"
 tokio-util = "0.7"

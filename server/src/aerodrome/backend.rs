@@ -1,9 +1,8 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use crate::client::UserMessage;
-
 use super::Aerodrome;
+use crate::client::UserMessage;
 
 use bars_graph::Patch;
 use bars_ipc::ConnectionCapacity;
@@ -16,7 +15,7 @@ use actix::{
 };
 use async_tungstenite::tokio::ConnectStream;
 use async_tungstenite::{WebSocketSender, WebSocketStream, tungstenite};
-use tracing::{debug, warn};
+use tracing::{debug, error, warn};
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(60);
 const PILOT_QUERY_INTERVAL: Duration = Duration::from_secs(30);
@@ -200,12 +199,21 @@ impl StreamHandler<Result<tungstenite::Message, tungstenite::Error>>
 				},
 				_ => (),
 			},
-			Err(err) => match self.error(err, ctx) {
-				Running::Continue => (),
-				Running::Stop => ctx.stop(),
+			Err(err) => {
+				error!("tungstenite read error: {err}");
+				ctx.stop();
 			},
 		}
 	}
 }
 
-impl WriteHandler<tungstenite::Error> for Backend {}
+impl WriteHandler<tungstenite::Error> for Backend {
+	fn error(
+		&mut self,
+		err: tungstenite::Error,
+		_ctx: &mut Self::Context,
+	) -> Running {
+		error!("tungstenite write error: {err}");
+		Running::Stop
+	}
+}

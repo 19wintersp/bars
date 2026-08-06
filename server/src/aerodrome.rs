@@ -217,7 +217,7 @@ impl Actor for Aerodrome {
 		self.subscribe_system_async::<ConnectionChanged>(ctx);
 		self.load_config(ctx);
 
-		ctx.run_interval(Duration::from_secs(1), |this, _ctx| {
+		ctx.run_interval(Duration::from_millis(500), |this, _ctx| {
 			this.fast_update();
 			this.slow_update();
 		});
@@ -232,6 +232,7 @@ impl Handler<Action> for Aerodrome {
 			&& self.capacity == ConnectionCapacity::Control
 		{
 			graph.apply_action(action);
+			self.fast_update();
 		}
 	}
 }
@@ -280,8 +281,10 @@ impl Handler<ApplyPatch> for Aerodrome {
 	) {
 		if let Some(graph) = &mut self.graph {
 			graph.apply_patch(&patch);
+			self.fast_update();
 		} else if let Some(config) = &self.config {
 			self.graph = Some(Graph::new_with_patch(config.clone(), patch));
+			self.fast_update();
 		}
 	}
 }
@@ -312,6 +315,7 @@ impl Handler<UpdateCrossing> for Aerodrome {
 	) {
 		if let Some(graph) = &mut self.graph {
 			graph.update_crossing(&object);
+			self.fast_update();
 		}
 	}
 }

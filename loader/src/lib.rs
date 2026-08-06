@@ -1,13 +1,13 @@
 use std::ffi::c_void;
 use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
-use bars_platform::NAMESPACE;
 use bars_platform::api::{COMPATIBILITY, Exit, Init, InitContext, Version};
+use bars_platform::{NAMESPACE, api_export_name};
+use bars_update::{Binary, Package};
 
 use anyhow::{Result, anyhow};
-use bars_platform::api_export_name;
 use libloading::Library;
 use tracing::{debug, error, warn};
 use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError};
@@ -21,16 +21,12 @@ static INIT_CONTEXT: InitContext = InitContext {
 	},
 };
 
-static FALLBACK_PLUGIN: &[u8] =
-	include_bytes!(env!("PLUGIN_LOADER_FALLBACK_PLUGIN_PATH"));
-static FALLBACK_SERVER: &[u8] =
-	include_bytes!(env!("PLUGIN_LOADER_FALLBACK_SERVER_PATH"));
-
-static PLUGIN_PREFIX: &str = "bars-plugin-core-";
-static PLUGIN_SUFFIX: &str = ".dll";
-static SERVER_PREFIX: &str = "bars-plugin-server-";
-static SERVER_SUFFIX: &str = ".exe";
-static FALLBACK_SERIAL: &str = "00000000";
+#[cfg(feature = "download")]
+static BUNDLED_PACKAGE: Option<Package> = None;
+#[cfg(not(feature = "download"))]
+static BUNDLED_PACKAGE: Option<Package> = Some(Package::new(include_bytes!(
+	env!("LOADER_BUNDLED_PACKAGE_PATH")
+)));
 
 static mut PLUGIN: Option<Plugin> = None;
 
@@ -38,11 +34,31 @@ static mut PLUGIN: Option<Plugin> = None;
 unsafe extern "C" fn euroscope_init(pointer: *mut *mut c_void) {
 	let _ = bars_tracing::init!();
 
-	let (plugin_path, server_path) = match find_binaries() {
+	debug!("init");
+
+	let (plugin_path, server_path) = match find_binaries(BUNDLED_PACKAGE.as_ref())
+	{
 		Ok(paths) => paths,
 		Err(err) => {
 			error!("failed to find binaries: {err}");
-			return
+
+			#[cfg(not(feature = "download"))]
+			return;
+
+			#[cfg(feature = "download")]
+			{
+				debug!("downloading binaries");
+
+				let res =
+					download_binaries().and_then(|package| find_binaries(Some(&package)));
+				match res {
+					Ok(paths) => paths,
+					Err(err) => {
+						error!("failed to download/find binaries: {err}");
+						return
+					},
+				}
+			}
 		},
 	};
 
@@ -59,6 +75,9 @@ unsafe extern "C" fn euroscope_init(pointer: *mut *mut c_void) {
 	debug!("starting server");
 	if let Err(err) = Command::new(server_path)
 		.creation_flags(CREATE_NO_WINDOW.0)
+		.stdin(Stdio::null())
+		.stdout(Stdio::null())
+		.stderr(Stdio::null())
 		.spawn()
 	{
 		error!("failed to spawn server: {err}");
@@ -75,56 +94,77 @@ unsafe extern "C" fn euroscope_init(pointer: *mut *mut c_void) {
 	};
 
 	unsafe {
+		debug!("calling plugin init");
 		(plugin.init)(pointer, &raw const INIT_CONTEXT);
+		debug!("storing library");
 		PLUGIN = Some(plugin);
 	}
 }
 
 #[unsafe(export_name = bars_euroscope::export_name!(exit))]
 unsafe extern "C" fn euroscope_exit() {
+	debug!("exit");
+
 	unsafe {
 		if let Some(plugin) = (&raw mut PLUGIN).as_mut().unwrap().take() {
+			debug!("calling plugin exit");
 			(plugin.exit)();
-			drop(plugin.library);
+			debug!("unloading library");
+			if let Err(err) = plugin.library.close() {
+				error!("failed to close library: {err}");
+			}
 		}
 	}
+
+	debug!("exited");
 }
 
-fn find_binaries() -> Result<(PathBuf, PathBuf)> {
+fn find_binaries(package: Option<&Package>) -> Result<(PathBuf, PathBuf)> {
 	let dir = bars_platform::dir::binaries()
 		.ok_or(anyhow!("failed to identify binaries directory"))?;
 	std::fs::create_dir_all(&dir)?;
 
-	let mut files = std::fs::read_dir(&dir)?
-		.filter_map(|entry| entry.ok())
-		.filter_map(|entry| entry.file_name().to_str().map(|s| s.to_string()))
-		.collect::<Vec<_>>();
-	files.sort();
+	if let Some(package) = package {
+		package.extract(&dir)?;
+	}
 
-	let find = |prefix: &str, suffix: &str, fallback: &[u8]| -> Result<PathBuf> {
-		let file = files
-			.iter()
-			.rfind(|name| name.starts_with(prefix) && name.ends_with(suffix));
-		let path = dir.join(
-			file
-				.cloned()
-				.unwrap_or_else(|| format!("{prefix}{FALLBACK_SERIAL}{suffix}")),
-		);
-
-		if file.is_some() {
-			debug!("found {path:?}");
-		} else {
-			debug!("creating fallback at {path:?}");
-			std::fs::write(&path, fallback)?;
-		}
-
-		Ok(path)
+	let find = |binary: &Binary| -> Result<PathBuf> {
+		binary
+			.find(&dir)?
+			.into_iter()
+			.max()
+			.ok_or_else(|| anyhow!("missing file"))
+			.inspect(|path| debug!("found {path:?}"))
 	};
 
-	Ok((
-		find(PLUGIN_PREFIX, PLUGIN_SUFFIX, FALLBACK_PLUGIN)?,
-		find(SERVER_PREFIX, SERVER_SUFFIX, FALLBACK_SERVER)?,
-	))
+	Ok((find(&Binary::PLUGIN)?, find(&Binary::SERVER)?))
+}
+
+#[cfg(feature = "download")]
+fn download_binaries() -> Result<Package> {
+	use windows::Win32::UI::WindowsAndMessaging::{
+		IDOK, MB_ICONINFORMATION, MB_OKCANCEL, MB_TASKMODAL, MessageBoxA,
+	};
+	use windows::core::s;
+
+	if unsafe {
+		MessageBoxA(
+			None,
+			s!(
+				"The plugin appears to have been loaded for the first time on this \
+				system. It will now attempt to complete the installation process by \
+				downloading the necessary files from the server. If this fails, please \
+				consult the logs."
+			),
+			s!("BARS loader"),
+			MB_OKCANCEL | MB_ICONINFORMATION | MB_TASKMODAL,
+		)
+	} != IDOK
+	{
+		anyhow::bail!("user cancelled download");
+	}
+
+	Package::download_blocking()
 }
 
 struct Plugin {

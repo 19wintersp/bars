@@ -1,0 +1,20 @@
+[package]
+name = "bars-update"
+version = "0.1.0"
+authors = ["Patrick Winters <19wintersp@gmail.com>"]
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow = { workspace = true, optional = true }
+lzma-rust2 = { workspace = true, features = ["optimization", "std", "xz"] }
+reqwest = { workspace = true, optional = true, features = ["json", "native-tls"] }
+serde = { workspace = true, optional = true, features = ["derive"] }
+tar.workspace = true
+tracing.workspace = true
+
+[features]
+blocking = ["reqwest?/blocking"]
+download = ["dep:anyhow", "dep:reqwest", "dep:serde"]

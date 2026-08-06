@@ -106,7 +106,7 @@ impl Button {
 		let radar_area = ctx.radar_area();
 		let area_size = (
 			(radar_area.right - radar_area.left) as f32 - size.0 - 2.0 * PADDING,
-			(radar_area.top - radar_area.bottom) as f32 - size.1 - 2.0 * PADDING,
+			(radar_area.bottom - radar_area.top) as f32 - size.1 - 2.0 * PADDING,
 		);
 
 		let origin = (

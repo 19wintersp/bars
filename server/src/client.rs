@@ -10,12 +10,13 @@ use bars_ipc::{Codec, Downstream, Upstream, tcp};
 
 use actix::io::{FramedWrite, WriteHandler};
 use actix::{
-	Actor, ActorContext, Addr, Arbiter, AsyncContext, Context, Handler, Message, StreamHandler,
+	Actor, ActorContext, Addr, Arbiter, AsyncContext, Context, Handler, Message,
+	StreamHandler,
 };
 use actix_broker::BrokerSubscribe;
 use tokio::net::TcpStream;
 use tokio::net::tcp::OwnedWriteHalf;
-use tracing::{instrument, warn};
+use tracing::{instrument, trace, warn};
 
 #[derive(Clone, Message)]
 #[rtype(result = "()")]
@@ -95,6 +96,16 @@ impl Handler<IpcDownstream> for Client {
 	type Result = ();
 
 	fn handle(&mut self, message: IpcDownstream, _ctx: &mut Self::Context) {
+		if !matches!(
+			message,
+			IpcDownstream {
+				message: Downstream::OpenAerodrome { .. }
+					| Downstream::MapUpdate { .. }
+			}
+		) {
+			trace!("{} <- {:?}", self.init.id, message.message);
+		}
+
 		self.sink.send(message.message);
 	}
 }
@@ -103,6 +114,8 @@ impl StreamHandler<io::Result<Upstream>> for Client {
 	fn handle(&mut self, item: io::Result<Upstream>, ctx: &mut Self::Context) {
 		match item {
 			Ok(message) => {
+				trace!("{} -> {message:?}", self.init.id);
+
 				if let Upstream::Subscribe {
 					aerodrome,
 					subscribe,

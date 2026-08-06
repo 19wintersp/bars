@@ -11,6 +11,7 @@ repository.workspace = true
 bars-euroscope.workspace = true
 bars-platform.workspace = true
 bars-tracing.workspace = true
+bars-update.workspace = true
 
 anyhow.workspace = true
 libloading.workspace = true
@@ -19,6 +20,13 @@ windows = {
 	workspace = true,
 	features = ["Win32_Security", "Win32_System_Threading"],
 }
+
+[features]
+download = [
+	"bars-update/blocking",
+	"bars-update/download",
+	"windows/Win32_UI_WindowsAndMessaging",
+]
 
 [lib]
 crate-type = ["cdylib"]

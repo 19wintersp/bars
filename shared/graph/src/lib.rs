@@ -73,7 +73,7 @@ impl MapState {
 }
 
 #[derive(Default)]
-#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize), serde(default))]
 pub struct Patch {
 	meta: Option<PatchMeta>,
 	#[cfg_attr(

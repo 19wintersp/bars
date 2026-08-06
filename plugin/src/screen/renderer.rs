@@ -194,7 +194,7 @@ impl Renderer {
 
 	pub fn render(
 		&mut self,
-		_ctx: &mut RadarScreen,
+		ctx: &mut RadarScreen,
 		aerodrome: &Aerodrome,
 		graphics: &GraphicsContext,
 	) {
@@ -212,6 +212,7 @@ impl Renderer {
 				}
 			} else {
 				if let Some(map) = &aerodrome.config().geo_map {
+					self.transform = Transform::from_screen_geo(ctx);
 					self.render_content(aerodrome, graphics, &map.paths, &map.widgets);
 				}
 			}
