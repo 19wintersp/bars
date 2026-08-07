@@ -87,17 +87,20 @@ impl PluginHandler for Plugin {
 				Some("auth") => {
 					self.context.borrow().authenticate(parts.get(2).map(|s| *s));
 				},
-				Some("connect") => {
+				Some(target @ ("connect" | "local")) => {
 					let context = self.context.borrow();
 
-					let connection = match context.network_state() {
-						NetworkConnection::None => NetworkConnection::Network,
-						NetworkConnection::Network => NetworkConnection::None,
+					let target = match target {
+						"connect" => NetworkConnection::Network,
+						"local" => NetworkConnection::Local,
+						_ => unreachable!(),
+					};
+					let connection = if context.network_state() == target {
+						NetworkConnection::None
+					} else {
+						target
 					};
 					context.connect_network(connection);
-				},
-				Some("local") => {
-					ctx.display_basic_message("Not yet implemented");
 				},
 				Some("start") => {
 					self.context.borrow_mut().connect();

@@ -2,18 +2,23 @@ mod aerodrome;
 mod map;
 
 use std::cmp::Ordering;
-use std::fmt::Debug;
+use std::error::Error;
+use std::fmt::{self, Debug, Display, Formatter};
 use std::hash::{Hash, Hasher};
 use std::io::{Error as IoError, Read, Write};
 use std::marker::PhantomData;
+use std::num::NonZeroU8;
+use std::str::FromStr;
 
 use bincode::config::Configuration as BincodeConfig;
+use bincode::de::{BorrowDecoder, Decoder};
+use bincode::enc::Encoder;
 use bincode::error::{DecodeError, EncodeError};
-use bincode::{Decode, Encode};
+use bincode::{BorrowDecode, Decode, Encode};
 
+use flate2::Compression;
 use flate2::read::DeflateDecoder;
 use flate2::write::DeflateEncoder;
-use flate2::Compression;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -83,9 +88,9 @@ pub struct Config {
 	pub version: Option<String>,
 
 	/// Aerodrome configurations, listed with corresponding aerodrome ICAO.
-	pub aerodromes: Vec<(String, Aerodrome)>,
+	pub aerodromes: Vec<(Icao, Aerodrome)>,
 	/// Maps, listed with corresponding aerodrome ICAO.
-	pub maps: Vec<(String, Maps)>,
+	pub maps: Vec<(Icao, Maps)>,
 }
 
 impl Loadable for Config {
@@ -141,3 +146,109 @@ impl<T> From<Ref<T>> for usize {
 		from.0
 	}
 }
+
+#[derive(Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(
+	feature = "serde",
+	derive(Deserialize, Serialize),
+	serde(try_from = "String", into = "String")
+)]
+pub struct Icao([NonZeroU8; 4]);
+
+impl Icao {
+	pub fn try_new(s: &str) -> Result<Self, ParseIcaoError> {
+		if s.as_bytes().len() != 4 {
+			Err(ParseIcaoError::Length)
+		} else if !s
+			.chars()
+			.all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit())
+		{
+			Err(ParseIcaoError::Character)
+		} else {
+			let mut buf = [0; 4];
+			buf.copy_from_slice(s.as_bytes());
+			Ok(Self(unsafe { std::mem::transmute(buf) }))
+		}
+	}
+
+	pub fn as_bytes(&self) -> &[u8; 4] {
+		unsafe { std::mem::transmute(self) }
+	}
+
+	pub fn as_str(&self) -> &str {
+		unsafe { std::str::from_utf8_unchecked(self.as_bytes()) }
+	}
+}
+
+impl Debug for Icao {
+	fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+		write!(f, "{:?}", self.as_str())
+	}
+}
+
+impl Display for Icao {
+	fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+		write!(f, "{}", self.as_str())
+	}
+}
+
+impl FromStr for Icao {
+	type Err = ParseIcaoError;
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
+		Self::try_new(s)
+	}
+}
+
+impl From<Icao> for String {
+	fn from(from: Icao) -> Self {
+		from.as_str().into()
+	}
+}
+
+impl TryFrom<String> for Icao {
+	type Error = ParseIcaoError;
+	fn try_from(from: String) -> Result<Self, Self::Error> {
+		Self::try_new(&from)
+	}
+}
+
+impl<'de, Context> BorrowDecode<'de, Context> for Icao {
+	fn borrow_decode<D: BorrowDecoder<'de, Context = Context>>(
+		decoder: &mut D,
+	) -> Result<Self, DecodeError> {
+		Self::decode(decoder)
+	}
+}
+
+impl<Context> Decode<Context> for Icao {
+	fn decode<D: Decoder<Context = Context>>(
+		decoder: &mut D,
+	) -> Result<Self, DecodeError> {
+		String::decode(decoder)?
+			.parse::<Self>()
+			.map_err(|err| DecodeError::OtherString(err.to_string()))
+	}
+}
+
+impl Encode for Icao {
+	fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
+		self.as_str().encode(encoder)
+	}
+}
+
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ParseIcaoError {
+	Length,
+	Character,
+}
+
+impl Display for ParseIcaoError {
+	fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+		match self {
+			Self::Length => write!(f, "invalid length"),
+			Self::Character => write!(f, "invalid character"),
+		}
+	}
+}
+
+impl Error for ParseIcaoError {}

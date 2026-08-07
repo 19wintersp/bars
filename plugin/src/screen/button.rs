@@ -1,11 +1,11 @@
 use super::{FONT_SIZE, GraphicsContext};
 
 use bars_config::{
-	Color, FillStyle, StrokeCap, StrokeJoin, StrokeStyle, StrokeWidth,
+	Color, FillStyle, Icao, StrokeCap, StrokeJoin, StrokeStyle, StrokeWidth,
 };
 use bars_euroscope::{Area, MouseEvent, Point, RadarScreen, SettingStore};
 use bars_graphics::{Alignment, Brush, Pen, Rect, StringFormat};
-use bars_ipc::{ConnectionCapacity, ConnectionTarget};
+use bars_ipc::{AerodromeState, ConnectionTarget};
 
 const PADDING: f32 = 0.2 * FONT_SIZE;
 const GLYPH_SIZE: f32 = 0.5 * FONT_SIZE;
@@ -15,6 +15,7 @@ const WHITE: Color = color(0xff, 0xff, 0xff);
 static DISCONNECTED_GLYPH: &[(f32, f32)] =
 	&[(0.0, 0.0), (1.0, 1.0), (0.5, 0.5), (0.0, 1.0), (1.0, 0.0)];
 static CONNECTED_GLYPH: &[(f32, f32)] = &[(0.0, 0.0), (0.5, 1.0), (1.0, 0.0)];
+static LOCAL_GLYPH: &[(f32, f32)] = &[(0.0, 0.0), (0.0, 1.0), (1.0, 1.0)];
 
 static SETTING_KEY_X: &str = "menuX";
 static SETTING_KEY_Y: &str = "menuY";
@@ -26,9 +27,9 @@ const fn color(r: u8, g: u8, b: u8) -> Color {
 pub struct Button {
 	position: (f32, f32),
 	area: Area,
-	aerodrome: Option<String>,
+	aerodrome: Option<Icao>,
 	network: ConnectionTarget,
-	capacity: ConnectionCapacity,
+	capacity: AerodromeState,
 	drag_offset: Option<(i32, i32)>,
 	white_brush: Brush,
 	white_pen: Pen,
@@ -46,7 +47,7 @@ impl Button {
 			},
 			aerodrome: None,
 			network: ConnectionTarget::None,
-			capacity: ConnectionCapacity::None,
+			capacity: AerodromeState::None,
 			drag_offset: None,
 			white_brush: Brush::new(FillStyle::Fill, WHITE).unwrap(),
 			white_pen: Pen::new(
@@ -60,14 +61,14 @@ impl Button {
 		}
 	}
 
-	pub fn set_aerodrome(&mut self, aerodrome: &Option<String>) {
-		self.aerodrome = aerodrome.clone();
+	pub fn set_aerodrome(&mut self, aerodrome: Option<Icao>) {
+		self.aerodrome = aerodrome;
 	}
 
 	pub fn set_state(
 		&mut self,
 		network: ConnectionTarget,
-		capacity: ConnectionCapacity,
+		capacity: AerodromeState,
 	) {
 		self.network = network;
 		self.capacity = capacity;
@@ -124,9 +125,11 @@ impl Button {
 		let bg_brush = Brush::new(
 			FillStyle::Fill,
 			match self.capacity {
-				ConnectionCapacity::None => color(0x26, 0x26, 0x26),
-				ConnectionCapacity::Observe => color(0x37, 0x30, 0xa3),
-				ConnectionCapacity::Control => color(0x06, 0x4e, 0x3b),
+				AerodromeState::None => color(0x26, 0x26, 0x26),
+				AerodromeState::Loading => color(0x4c, 0x4c, 0x4c),
+				AerodromeState::Error => color(0x99, 0x1b, 0x1b),
+				AerodromeState::Observe => color(0x37, 0x30, 0xa3),
+				AerodromeState::Control => color(0x06, 0x4e, 0x3b),
 			},
 		)
 		.unwrap();
@@ -134,6 +137,7 @@ impl Button {
 		let glyph = match self.network {
 			ConnectionTarget::None => DISCONNECTED_GLYPH,
 			ConnectionTarget::Network => CONNECTED_GLYPH,
+			ConnectionTarget::Local => LOCAL_GLYPH,
 		}
 		.iter()
 		.map(|(rx, ry)| bars_graphics::Point {

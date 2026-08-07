@@ -1,13 +1,14 @@
-use crate::api::{ApiManager, FetchConfig};
+use crate::actor::service::api::{ApiService, FetchConfig};
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use bars_config::{Config, Loadable};
+use bars_config::{Config, Icao, Loadable};
 use bars_ipc::AerodromeConfig;
 
 use actix::{
-	Actor, ActorFutureExt, Addr, Arbiter, Context, Handler, Message, ResponseActFuture, WrapFuture,
+	Actor, ActorFutureExt, Context, Handler, Message, ResponseActFuture,
+	Supervised, SystemService, WrapFuture,
 };
 use anyhow::{Result, anyhow};
 use bytes::{Buf, Bytes};
@@ -16,28 +17,16 @@ use tracing::{info, warn};
 #[derive(Message)]
 #[rtype(result = "Result<Arc<AerodromeConfig>>")]
 pub struct GetConfig {
-	pub aerodrome: String,
+	pub aerodrome: Icao,
 }
 
-pub struct ConfigManager {
-	api: Addr<ApiManager>,
-	cache: HashMap<String, Arc<AerodromeConfig>>,
+#[derive(Default)]
+pub struct ConfigService {
+	cache: HashMap<Icao, Arc<AerodromeConfig>>,
 }
 
-impl ConfigManager {
-	pub fn new(api: Addr<ApiManager>) -> Addr<Self> {
-		let this = Self {
-			api,
-			cache: HashMap::new(),
-		};
-		Self::start_in_arbiter(&Arbiter::current(), |_ctx| this)
-	}
-
-	fn load(
-		&mut self,
-		icao: String,
-		data: Bytes,
-	) -> Result<Arc<AerodromeConfig>> {
+impl ConfigService {
+	fn load(&mut self, icao: Icao, data: Bytes) -> Result<Arc<AerodromeConfig>> {
 		let config = Config::load(data.reader())?;
 
 		info!("loaded config {:?} ver {:?}", config.name, config.version);
@@ -75,11 +64,15 @@ impl ConfigManager {
 	}
 }
 
-impl Actor for ConfigManager {
+impl Actor for ConfigService {
 	type Context = Context<Self>;
 }
 
-impl Handler<GetConfig> for ConfigManager {
+impl Supervised for ConfigService {}
+
+impl SystemService for ConfigService {}
+
+impl Handler<GetConfig> for ConfigService {
 	type Result = ResponseActFuture<Self, Result<Arc<AerodromeConfig>>>;
 
 	fn handle(
@@ -91,13 +84,10 @@ impl Handler<GetConfig> for ConfigManager {
 			Box::pin(actix::fut::ready(Ok(config)))
 		} else {
 			Box::pin(
-				self
-					.api
-					.send(FetchConfig {
-						aerodrome: aerodrome.clone(),
-					})
+				ApiService::from_registry()
+					.send(FetchConfig { aerodrome })
 					.into_actor(self)
-					.map(|res, this, _ctx| {
+					.map(move |res, this, _ctx| {
 						res
 							.map_err(|err| err.into())
 							.flatten()

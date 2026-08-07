@@ -8,6 +8,7 @@ use std::collections::{HashMap, HashSet};
 use std::mem::ManuallyDrop;
 use std::ops::{Deref, DerefMut};
 
+use bars_config::Icao;
 use bars_ipc::{ConnectionTarget, Downstream, Upstream};
 
 use tracing::{info, warn};
@@ -16,9 +17,9 @@ pub struct Context {
 	client: Client,
 	client_state: ClientState,
 	network_state: ConnectionTarget,
-	subscriptions: HashMap<String, usize>,
+	subscriptions: HashMap<Icao, usize>,
 	pilots: HashSet<String>,
-	aerodromes: HashMap<String, Aerodrome>,
+	aerodromes: HashMap<Icao, Aerodrome>,
 }
 
 impl Context {
@@ -49,10 +50,10 @@ impl Context {
 		self.client.send(Upstream::Connect { target: capacity });
 	}
 
-	pub fn subscribe(&mut self, aerodrome: &str, subscribe: bool) {
+	pub fn subscribe(&mut self, aerodrome: Icao, subscribe: bool) {
 		let rc = self
 			.subscriptions
-			.entry(aerodrome.into())
+			.entry(aerodrome)
 			.and_modify(|rc| {
 				if subscribe {
 					*rc += 1;
@@ -63,7 +64,7 @@ impl Context {
 			.or_insert_with(|| {
 				if subscribe {
 					self.client.send(Upstream::Subscribe {
-						aerodrome: aerodrome.into(),
+						aerodrome,
 						subscribe: true,
 					});
 					1
@@ -74,10 +75,10 @@ impl Context {
 
 		if *rc == 0 {
 			self.client.send(Upstream::Subscribe {
-				aerodrome: aerodrome.into(),
+				aerodrome,
 				subscribe: false,
 			});
-			self.subscriptions.remove(aerodrome);
+			self.subscriptions.remove(&aerodrome);
 		}
 	}
 
@@ -89,14 +90,14 @@ impl Context {
 		self.pilots.contains(callsign)
 	}
 
-	pub fn aerodrome(&self, icao: &str) -> Option<&Aerodrome> {
-		self.aerodromes.get(icao)
+	pub fn aerodrome(&self, icao: Icao) -> Option<&Aerodrome> {
+		self.aerodromes.get(&icao)
 	}
 
-	pub fn aerodrome_mut(&mut self, icao: &str) -> Option<AerodromeMut<'_>> {
+	pub fn aerodrome_mut(&mut self, icao: Icao) -> Option<AerodromeMut<'_>> {
 		self
 			.aerodromes
-			.remove_entry(icao)
+			.remove_entry(&icao)
 			.map(|entry| AerodromeMut {
 				context: self,
 				entry: ManuallyDrop::new(entry),
@@ -114,9 +115,9 @@ impl Context {
 					Downstream::Hello => {
 						self.reset();
 
-						for aerodrome in self.subscriptions.keys() {
+						for aerodrome in self.subscriptions.keys().copied() {
 							self.client.send(Upstream::Subscribe {
-								aerodrome: aerodrome.into(),
+								aerodrome,
 								subscribe: true,
 							});
 						}
@@ -125,26 +126,21 @@ impl Context {
 					Downstream::Connection { target } => {
 						self.network_state = target;
 					},
-					Downstream::OpenAerodrome { aerodrome, config } => {
-						self.aerodromes.insert(aerodrome, Aerodrome::new(config));
-					},
-					Downstream::CloseAerodrome { aerodrome } => {
-						self.aerodromes.remove(&aerodrome);
-					},
-					Downstream::AerodromeConnection {
-						aerodrome,
-						capacity,
-					} => {
-						self
-							.aerodromes
-							.get_mut(&aerodrome)
-							.map(|aerodrome| aerodrome.set_capacity(capacity));
-					},
-					Downstream::MapUpdate { aerodrome, update } => {
+					Downstream::Aerodrome { aerodrome, config, state: capacity, updates } => {
+						if let Some(config) = config {
+							self.aerodromes.insert(aerodrome, Aerodrome::new(config));
+						}
+
 						if let Some(aerodrome) = self.aerodromes.get_mut(&aerodrome) {
-							aerodrome.update(update);
+							if let Some(capacity) = capacity {
+								aerodrome.set_capacity(capacity);
+							}
+
+							for update in updates {
+								aerodrome.update(update);
+							}
 						} else {
-							warn!("map update for closed ad {aerodrome:?}");
+							warn!("unhandled message for closed ad {aerodrome}");
 						}
 					},
 					Downstream::Pilots { callsigns } => {
@@ -179,7 +175,7 @@ impl Context {
 
 pub struct AerodromeMut<'a> {
 	context: &'a mut Context,
-	entry: ManuallyDrop<(String, Aerodrome)>,
+	entry: ManuallyDrop<(Icao, Aerodrome)>,
 }
 
 impl Deref for AerodromeMut<'_> {
@@ -202,7 +198,7 @@ impl Drop for AerodromeMut<'_> {
 
 		for action in aerodrome.take_actions() {
 			self.context.client.send(Upstream::GraphAction {
-				aerodrome: icao.clone(),
+				aerodrome: icao,
 				action,
 			});
 		}

@@ -72,7 +72,7 @@ impl MapState {
 	}
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize), serde(default))]
 pub struct Patch {
 	meta: Option<PatchMeta>,
@@ -95,12 +95,14 @@ impl Patch {
 	}
 }
 
+#[derive(Debug)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 struct PatchMeta {
 	client: u64,
 	serial: u64,
 }
 
+#[derive(Debug)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 enum PatchBlock {
 	Clear,

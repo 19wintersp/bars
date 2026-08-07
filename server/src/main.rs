@@ -1,69 +1,62 @@
-mod aerodrome;
-mod api;
-mod client;
-mod config;
-mod connection;
-mod server;
+mod actor;
 mod settings;
 mod update;
 
-use crate::client::{Client, ClientInit};
-use crate::server::{AddClient, ClientId, Server};
+use crate::actor::client::{Client, ClientId};
+use crate::actor::service::core::{AddClient, CoreService};
 use crate::update::Update;
 
 use std::net::Ipv4Addr;
 use std::time::Duration;
 
-use actix::{Addr, Arbiter};
+use actix::{Arbiter, System, SystemService};
 use anyhow::Result;
 use tokio::io::AsyncReadExt;
 use tokio::net::{TcpListener, TcpStream};
 use tracing::{debug, error, info, warn};
 
-#[actix::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
 	bars_tracing::init!()?;
 
+	let socket = bind().await?;
 	let update = tokio::spawn(Update::begin());
 
-	let arbiter = Arbiter::new();
+	tokio::task::spawn_blocking(move || {
+		let system = System::new();
 
-	let socket = bind().await?;
+		CoreService::from_registry();
 
-	let server = Server::new();
-	let mut id: ClientId = 0;
+		system.runtime().spawn(async move {
+			let mut id: ClientId = 0;
 
-	loop {
-		const TIMEOUT: Duration = Duration::from_secs(1);
+			loop {
+				const TIMEOUT: Duration = Duration::from_secs(1);
 
-		tokio::select! {
-			res = socket.accept() => match res {
-				Ok((stream, remote)) => {
-					debug!("accepted from {remote}");
-
-					let server = server.clone();
-					id += 1;
-
-					tokio::spawn(async move {
-						if let Err(err) = handle(stream, id, server).await {
-							warn!("error handling {remote}: {err}");
-						}
-					});
-				},
-				Err(err) => {
-					warn!("failed to accept: {err}");
-					tokio::time::sleep(TIMEOUT).await;
-				},
-			},
-			_ = tokio::time::sleep(Duration::from_secs(5)) => {
-				if !server.connected() {
-					break
+				match socket.accept().await {
+					Ok((stream, remote)) => {
+						debug!("accepted from {remote}");
+						id += 1;
+						Arbiter::current().spawn(async move {
+							if let Err(err) = handle(stream, id).await {
+								warn!("error handling {remote}: {err}");
+							}
+						});
+					},
+					Err(err) => {
+						warn!("failed to accept: {err}");
+						tokio::time::sleep(TIMEOUT).await;
+					},
 				}
-			},
-		}
-	}
+			}
+		});
 
-	drop(arbiter);
+		if let Err(err) = system.run() {
+			error!("system: {err}");
+		}
+	})
+	.await
+	.inspect_err(|err| error!("system task: {err}"))?;
 
 	info!("closing, committing update");
 
@@ -102,22 +95,12 @@ async fn bind() -> Result<TcpListener> {
 	unreachable!();
 }
 
-async fn handle(
-	mut stream: TcpStream,
-	id: ClientId,
-	server: Addr<Server>,
-) -> Result<()> {
+async fn handle(mut stream: TcpStream, id: ClientId) -> Result<()> {
 	let init_byte = stream.read_u8().await?;
 	if init_byte == bars_ipc::TCP_INIT_BYTE {
-		server.do_send(AddClient {
+		CoreService::from_registry().do_send(AddClient {
 			id,
-			addr: Client::new_tcp(
-				stream,
-				ClientInit {
-					id,
-					server: server.clone(),
-				},
-			),
+			addr: Client::new_tcp(stream, id),
 		});
 	} else {
 		warn!("unhandled client with nonconformant initial byte {init_byte:02x}");

@@ -6,12 +6,12 @@ use bars_graph::{
 	MapState, MapUpdate, MapUpdateBindCondition, MapUpdateBlockCondition,
 	MapUpdateNodeCondition,
 };
-use bars_ipc::{AerodromeConfig, ConnectionCapacity, GraphAction};
+use bars_ipc::{AerodromeConfig, AerodromeState, GraphAction};
 
 pub struct Aerodrome {
 	config: AerodromeConfig,
 	profile: AerodromeProfile,
-	capacity: ConnectionCapacity,
+	capacity: AerodromeState,
 	nodes: Vec<MapState>,
 	binds: Vec<MapState>,
 	countdowns: HashMap<ResetTarget, Countdown>,
@@ -39,7 +39,7 @@ impl Aerodrome {
 				blocks: vec![Default::default(); config.config.blocks.len()],
 				binds: vec![Default::default(); config.config.binds.len()],
 			},
-			capacity: ConnectionCapacity::None,
+			capacity: AerodromeState::None,
 			nodes: vec![state; config.config.nodes.len()],
 			binds: vec![state; config.config.binds.len()],
 			countdowns: HashMap::new(),
@@ -48,11 +48,11 @@ impl Aerodrome {
 		}
 	}
 
-	pub fn capacity(&self) -> ConnectionCapacity {
+	pub fn capacity(&self) -> AerodromeState {
 		self.capacity
 	}
 
-	pub fn set_capacity(&mut self, capacity: ConnectionCapacity) {
+	pub fn set_capacity(&mut self, capacity: AerodromeState) {
 		self.capacity = capacity;
 	}
 
@@ -82,6 +82,14 @@ impl Aerodrome {
 
 	pub fn is_node_router(&self, node: Ref<Node>) -> bool {
 		self.profile.nodes[node.0].router
+	}
+
+	pub fn is_node_fixed(&self, node: Ref<Node>) -> bool {
+		self.profile.nodes[node.0].fixed.is_some()
+	}
+
+	pub fn is_block_fixed(&self, block: Ref<Block>) -> bool {
+		self.profile.blocks[block.0].fixed
 	}
 
 	pub fn node_state(&self, node: Ref<Node>) -> MapState {

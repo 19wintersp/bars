@@ -1,11 +1,19 @@
 mod base;
 
 use self::base::Base;
+use crate::actor::service::settings::{
+	GetSettings, SetApiToken, SettingsService,
+};
 use crate::settings::ApiSettings;
 
 use std::time::Duration;
 
-use actix::{Actor, Addr, Arbiter, Context, Handler, Message, ResponseFuture};
+use bars_config::Icao;
+
+use actix::{
+	Actor, ActorFutureExt, AsyncContext, Context, Handler, Message,
+	ResponseFuture, Supervised, SystemService, WrapFuture,
+};
 use anyhow::{Result, bail};
 use async_tungstenite::tungstenite::client::IntoClientRequest;
 use bytes::Bytes;
@@ -13,7 +21,7 @@ use http::request::Builder as RequestBuilder;
 use http::{Request, header};
 use reqwest::{Client, Response};
 use serde::Deserialize;
-use tracing::warn;
+use tracing::{error, instrument, warn};
 
 static USER_AGENT: &str = concat!(
 	env!("CARGO_PKG_NAME"),
@@ -27,7 +35,7 @@ const IS_ONLINE_DELAY: Duration = Duration::from_secs(2);
 #[derive(Message)]
 #[rtype(result = "Result<Request<()>>")]
 pub struct CreateConnectRequest {
-	pub aerodrome: String,
+	pub aerodrome: Icao,
 }
 
 #[derive(Message)]
@@ -37,22 +45,18 @@ pub struct FetchIsOnline;
 #[derive(Message)]
 #[rtype(result = "Result<Bytes>")]
 pub struct FetchConfig {
-	pub aerodrome: String,
+	pub aerodrome: Icao,
 }
 
-#[derive(Message)]
-#[rtype(result = "()")]
-pub struct UpdateToken(pub Option<String>);
-
-pub struct ApiManager {
+pub struct ApiService {
 	api: Base,
 	cdn: Base,
 	token: Option<String>,
 	client: Client,
 }
 
-impl ApiManager {
-	pub fn new(settings: &ApiSettings) -> Addr<Self> {
+impl ApiService {
+	fn load_settings(&mut self, settings: ApiSettings) {
 		fn base(from: &Option<String>, name: &str) -> Option<Base> {
 			from.as_ref().and_then(|base| {
 				Base::new(base).or_else(|| {
@@ -62,14 +66,9 @@ impl ApiManager {
 			})
 		}
 
-		let this = Self {
-			api: base(&settings.api, "api").unwrap_or_else(Base::default_api),
-			cdn: base(&settings.cdn, "cdn").unwrap_or_else(Base::default_cdn),
-			token: settings.token.clone(),
-			client: Client::new(),
-		};
-
-		Self::start_in_arbiter(&Arbiter::current(), |_ctx| this)
+		self.api = base(&settings.api, "api").unwrap_or_else(Base::default_api);
+		self.cdn = base(&settings.cdn, "cdn").unwrap_or_else(Base::default_cdn);
+		self.token = settings.token;
 	}
 
 	fn create_request(&self) -> Result<RequestBuilder> {
@@ -95,13 +94,45 @@ impl ApiManager {
 	}
 }
 
-impl Actor for ApiManager {
-	type Context = Context<Self>;
+impl Default for ApiService {
+	fn default() -> Self {
+		Self {
+			api: Base::default_api(),
+			cdn: Base::default_cdn(),
+			token: None,
+			client: Client::new(),
+		}
+	}
 }
 
-impl Handler<CreateConnectRequest> for ApiManager {
+impl Actor for ApiService {
+	type Context = Context<Self>;
+
+	fn started(&mut self, ctx: &mut Self::Context) {
+		ctx.wait(
+			SettingsService::from_registry()
+				.send(GetSettings)
+				.into_actor(self)
+				.map(|res, this, _ctx| match res {
+					Ok(settings) => this.load_settings(settings.api),
+					Err(err) => error!("failed to get settings: {err}"),
+				}),
+		);
+	}
+}
+
+impl Supervised for ApiService {
+	fn restarting(&mut self, ctx: &mut <Self as Actor>::Context) {
+		self.started(ctx);
+	}
+}
+
+impl SystemService for ApiService {}
+
+impl Handler<CreateConnectRequest> for ApiService {
 	type Result = Result<Request<()>>;
 
+	#[instrument(level = "trace", skip(self, _ctx))]
 	fn handle(
 		&mut self,
 		CreateConnectRequest { aerodrome }: CreateConnectRequest,
@@ -114,9 +145,10 @@ impl Handler<CreateConnectRequest> for ApiManager {
 	}
 }
 
-impl Handler<FetchIsOnline> for ApiManager {
+impl Handler<FetchIsOnline> for ApiService {
 	type Result = ResponseFuture<Result<bool>>;
 
+	#[instrument(level = "trace", skip_all)]
 	fn handle(
 		&mut self,
 		_: FetchIsOnline,
@@ -148,13 +180,14 @@ impl Handler<FetchIsOnline> for ApiManager {
 	}
 }
 
-impl Handler<FetchConfig> for ApiManager {
+impl Handler<FetchConfig> for ApiService {
 	type Result = ResponseFuture<Result<Bytes>>;
 
+	#[instrument(level = "trace", skip(self, _ctx))]
 	fn handle(
 		&mut self,
 		FetchConfig { aerodrome }: FetchConfig,
-		_: &mut Self::Context,
+		_ctx: &mut Self::Context,
 	) -> Self::Result {
 		let request = self
 			.cdn
@@ -167,12 +200,12 @@ impl Handler<FetchConfig> for ApiManager {
 	}
 }
 
-impl Handler<UpdateToken> for ApiManager {
+impl Handler<SetApiToken> for ApiService {
 	type Result = ();
 
 	fn handle(
 		&mut self,
-		UpdateToken(token): UpdateToken,
+		SetApiToken(token): SetApiToken,
 		_ctx: &mut Self::Context,
 	) {
 		self.token = token;

@@ -16,13 +16,13 @@ use std::cell::RefCell;
 use std::ffi::{CStr, CString};
 use std::rc::Rc;
 
-use bars_config::{FillStyle, Preset, Profile, Ref};
+use bars_config::{FillStyle, Icao, Preset, Profile, Ref};
 use bars_euroscope::{
 	Area, Hdc, MouseEvent, Point, PopupListElementCheckbox, PopupListItemOptions,
 	RadarScreen, RadarScreenHandler, RefreshPhase, ScreenObject, SettingStore,
 };
 use bars_graphics::{Brush, Font, FontFamily, Graphics};
-use bars_ipc::ConnectionCapacity;
+use bars_ipc::AerodromeState;
 
 use tracing::{debug, warn};
 
@@ -42,19 +42,19 @@ enum ObjectGroup {
 
 struct ContextWrapper {
 	context: Rc<RefCell<Context>>,
-	aerodrome: Option<String>,
+	aerodrome: Option<Icao>,
 }
 
 impl ContextWrapper {
-	fn set_aerodrome(&mut self, aerodrome: Option<String>) {
+	fn set_aerodrome(&mut self, aerodrome: Option<Icao>) {
 		if aerodrome != self.aerodrome {
 			let mut context = self.context.borrow_mut();
 
 			if let Some(current) = std::mem::replace(&mut self.aerodrome, aerodrome) {
-				context.subscribe(&current, false);
+				context.subscribe(current, false);
 			}
 
-			if let Some(new) = &self.aerodrome {
+			if let Some(new) = self.aerodrome {
 				context.subscribe(new, true);
 			}
 		}
@@ -64,7 +64,6 @@ impl ContextWrapper {
 		let context = self.context.borrow();
 		self
 			.aerodrome
-			.as_ref()
 			.and_then(|aerodrome| context.aerodrome(aerodrome))
 			.map(f)
 	}
@@ -76,7 +75,6 @@ impl ContextWrapper {
 		let mut context = self.context.borrow_mut();
 		self
 			.aerodrome
-			.as_ref()
 			.and_then(|aerodrome| context.aerodrome_mut(aerodrome))
 			.map(f)
 	}
@@ -84,7 +82,7 @@ impl ContextWrapper {
 
 impl Drop for ContextWrapper {
 	fn drop(&mut self) {
-		if let Some(aerodrome) = &self.aerodrome {
+		if let Some(aerodrome) = self.aerodrome {
 			self.context.borrow_mut().subscribe(aerodrome, false);
 		}
 	}
@@ -98,7 +96,7 @@ pub struct Screen {
 	renderer: Renderer,
 	highlight: Highlight,
 	aerodrome_loaded: bool,
-	capacity_loaded: ConnectionCapacity,
+	capacity_loaded: AerodromeState,
 	profile_loaded: usize,
 	pending_call: Option<FunctionCall>,
 }
@@ -125,19 +123,15 @@ impl Screen {
 			renderer: Renderer::new(geo),
 			highlight: Highlight::None,
 			aerodrome_loaded: false,
-			capacity_loaded: ConnectionCapacity::None,
+			capacity_loaded: AerodromeState::None,
 			profile_loaded: usize::MAX,
 			pending_call: None,
 		}
 	}
 
-	fn set_aerodrome(
-		&mut self,
-		aerodrome: Option<String>,
-		ctx: &mut RadarScreen,
-	) {
+	fn set_aerodrome(&mut self, aerodrome: Option<Icao>, ctx: &mut RadarScreen) {
 		self.context.set_aerodrome(aerodrome);
-		self.button.set_aerodrome(&self.context.aerodrome);
+		self.button.set_aerodrome(self.context.aerodrome);
 
 		ctx.save_setting(
 			SETTING_KEY_AERODROME,
@@ -291,7 +285,7 @@ impl Screen {
 		match function {
 			TagFunctionType::OpenProfileList => {
 				self.context.with_aerodrome(|aerodrome| {
-					if aerodrome.capacity() == ConnectionCapacity::Control {
+					if aerodrome.capacity() == AerodromeState::Control {
 						self.open_list(
 							ctx,
 							area,
@@ -310,7 +304,7 @@ impl Screen {
 			},
 			TagFunctionType::OpenPresetList => {
 				self.context.with_aerodrome(|aerodrome| {
-					if aerodrome.capacity() == ConnectionCapacity::Control {
+					if aerodrome.capacity() == AerodromeState::Control {
 						self.open_list(
 							ctx,
 							area,
@@ -378,7 +372,7 @@ impl Screen {
 
 impl RadarScreenHandler for Screen {
 	fn init(&mut self, ctx: &mut RadarScreen) {
-		self.set_aerodrome(ctx.load_setting::<str>(SETTING_KEY_AERODROME), ctx);
+		self.set_aerodrome(ctx.load_setting::<Icao>(SETTING_KEY_AERODROME), ctx);
 		self.highlight = ctx
 			.load_setting::<Highlight>(SETTING_KEY_HIGHLIGHT)
 			.unwrap_or_default();
@@ -442,7 +436,7 @@ impl RadarScreenHandler for Screen {
 				if self
 					.context
 					.with_aerodrome(|aerodrome| aerodrome.capacity())
-					.is_some_and(|capacity| capacity != ConnectionCapacity::None)
+					.is_some_and(|capacity| capacity != AerodromeState::None)
 				{
 					self.render_highlights(ctx);
 				}
@@ -453,7 +447,7 @@ impl RadarScreenHandler for Screen {
 					self
 						.context
 						.with_aerodrome(|aerodrome| aerodrome.capacity())
-						.unwrap_or(ConnectionCapacity::None),
+						.unwrap_or(AerodromeState::None),
 				);
 				self.button.render(ctx, &self.graphics);
 
@@ -545,18 +539,15 @@ impl RadarScreenHandler for Screen {
 				});
 			},
 			TagFunctionType::SetAerodrome => {
-				let aerodrome = string
+				let string = string
 					.map(|s| s.to_string_lossy().into_owned())
-					.unwrap_or_default()
-					.to_ascii_uppercase();
-				match aerodrome.len() {
-					0 => {
-						self.set_aerodrome(None, ctx);
-					},
-					4 if aerodrome.chars().all(|c| c.is_ascii_uppercase()) => {
-						self.set_aerodrome(Some(aerodrome), ctx);
-					},
-					_ => (),
+					.unwrap_or_default();
+				if string.is_empty() {
+					self.set_aerodrome(None, ctx);
+				} else if let Ok(aerodrome) =
+					string.to_ascii_uppercase().parse::<Icao>()
+				{
+					self.set_aerodrome(Some(aerodrome), ctx);
 				}
 			},
 			TagFunctionType::SetProfile => self.set_profile(index.into()),

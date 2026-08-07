@@ -7,8 +7,8 @@ pub mod tcp;
 pub use self::codec::Codec;
 
 use bars_config::{
-	Aerodrome, Block, BlockState, GeoMap, Map, Node, Preset, Profile, Ref, State,
-	Style,
+	Aerodrome, Block, BlockState, GeoMap, Icao, Map, Node, Preset, Profile, Ref,
+	State, Style,
 };
 use bars_graph::MapUpdate;
 
@@ -26,11 +26,11 @@ pub enum Upstream {
 		target: ConnectionTarget,
 	},
 	Subscribe {
-		aerodrome: String,
+		aerodrome: Icao,
 		subscribe: bool,
 	},
 	GraphAction {
-		aerodrome: String,
+		aerodrome: Icao,
 		action: GraphAction,
 	},
 }
@@ -51,20 +51,11 @@ pub enum Downstream {
 	Connection {
 		target: ConnectionTarget,
 	},
-	OpenAerodrome {
-		aerodrome: String,
-		config: AerodromeConfig,
-	},
-	CloseAerodrome {
-		aerodrome: String,
-	},
-	AerodromeConnection {
-		aerodrome: String,
-		capacity: ConnectionCapacity,
-	},
-	MapUpdate {
-		aerodrome: String,
-		update: MapUpdate,
+	Aerodrome {
+		aerodrome: Icao,
+		config: Option<AerodromeConfig>,
+		state: Option<AerodromeState>,
+		updates: Vec<MapUpdate>,
 	},
 	Pilots {
 		callsigns: Vec<String>,
@@ -72,19 +63,41 @@ pub enum Downstream {
 }
 
 #[derive(
-	Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize,
+	Clone,
+	Copy,
+	Debug,
+	Default,
+	PartialEq,
+	Eq,
+	PartialOrd,
+	Ord,
+	Deserialize,
+	Serialize,
 )]
 pub enum ConnectionTarget {
+	#[default]
 	None,
 	Network,
-	//Local,
+	Local,
 }
 
 #[derive(
-	Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize,
+	Clone,
+	Copy,
+	Debug,
+	Default,
+	PartialEq,
+	Eq,
+	PartialOrd,
+	Ord,
+	Deserialize,
+	Serialize,
 )]
-pub enum ConnectionCapacity {
+pub enum AerodromeState {
+	#[default]
 	None,
+	Loading,
+	Error,
 	Observe,
 	Control,
 }

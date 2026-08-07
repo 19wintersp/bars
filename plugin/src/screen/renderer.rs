@@ -13,7 +13,7 @@ use bars_config::{
 };
 use bars_euroscope::{MouseButton, MouseEvent, RadarScreen, SettingStore};
 use bars_graphics::{Alignment, Brush, Pen, Point, Rect, StringFormat, Style};
-use bars_ipc::ConnectionCapacity;
+use bars_ipc::AerodromeState;
 
 use tracing::{debug, trace};
 
@@ -27,7 +27,7 @@ pub struct Renderer {
 	view: Option<Ref<View>>,
 	transform: Transform,
 	styles: Vec<Style>,
-	capacity: ConnectionCapacity,
+	capacity: AerodromeState,
 }
 
 impl Renderer {
@@ -38,7 +38,7 @@ impl Renderer {
 			view: if geo { None } else { Some(0.into()) },
 			transform: Transform::new(),
 			styles: Vec::new(),
-			capacity: ConnectionCapacity::None,
+			capacity: AerodromeState::None,
 		}
 	}
 
@@ -50,7 +50,7 @@ impl Renderer {
 		self.view
 	}
 
-	pub fn set_capacity(&mut self, capacity: ConnectionCapacity) {
+	pub fn set_capacity(&mut self, capacity: AerodromeState) {
 		self.capacity = capacity;
 	}
 
@@ -151,7 +151,12 @@ impl Renderer {
 				&brush,
 			);
 
-			self.render_backdrop_content(graphics, &map.paths, &map.targets);
+			self.render_backdrop_content(
+				aerodrome,
+				graphics,
+				&map.paths,
+				&map.targets,
+			);
 		} else {
 			self.transform = Transform::from_screen_geo(ctx);
 
@@ -159,17 +164,23 @@ impl Renderer {
 				return
 			};
 
-			self.render_backdrop_content(graphics, &map.paths, &map.targets);
+			self.render_backdrop_content(
+				aerodrome,
+				graphics,
+				&map.paths,
+				&map.targets,
+			);
 		}
 	}
 
 	fn render_backdrop_content<T: Transformable>(
 		&mut self,
+		aerodrome: &Aerodrome,
 		graphics: &GraphicsContext,
 		paths: &[Path<T>],
 		targets: &[Target<T>],
 	) {
-		if self.capacity != ConnectionCapacity::None {
+		if self.capacity != AerodromeState::None {
 			for path in paths {
 				if let PathDisplay::Fixed { style } = path.display {
 					let points = self.project_points(&path.points);
@@ -180,9 +191,15 @@ impl Renderer {
 			}
 		}
 
-		if self.capacity == ConnectionCapacity::Control {
+		if self.capacity == AerodromeState::Control {
 			for target in targets {
-				// todo: filter commands referencing fixed blocks/nodes
+				if match target.command {
+					TargetCommand::Node(node) => aerodrome.is_node_fixed(node),
+					TargetCommand::Block(block) => aerodrome.is_block_fixed(block),
+					TargetCommand::Preset(_) => false,
+				} {
+					continue
+				}
 
 				for polygon in &target.polygons {
 					let points = self.project_points(&polygon);
@@ -198,14 +215,18 @@ impl Renderer {
 		aerodrome: &Aerodrome,
 		graphics: &GraphicsContext,
 	) {
-		trace!("refresh ({:?}, {})", aerodrome.capacity(), self.styles.len());
+		trace!(
+			"refresh ({:?}, {})",
+			aerodrome.capacity(),
+			self.styles.len()
+		);
 
 		if self.styles.is_empty() {
 			// not yet initialised
 			return
 		}
 
-		if self.capacity != ConnectionCapacity::None {
+		if self.capacity != AerodromeState::None {
 			if self.view.is_some() {
 				if let Some(map) = self.find_map(aerodrome) {
 					self.render_content(aerodrome, graphics, &map.paths, &map.widgets);
@@ -322,12 +343,9 @@ impl Renderer {
 							THEME_COLOR,
 						)
 						.unwrap();
-						graphics.graphics.draw_arc(
-							bbox,
-							-90.0,
-							-360.0 * proportion,
-							&pen,
-						);
+						graphics
+							.graphics
+							.draw_arc(bbox, -90.0, -360.0 * proportion, &pen);
 
 						let format =
 							StringFormat::new(Alignment::Center, Alignment::Center);

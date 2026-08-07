@@ -1,59 +1,62 @@
-use crate::server::{
-	ClientId, IpcDownstream, IpcUpstream, RemoveClient, Server,
-};
+use crate::actor::service::core::{CoreService, RemoveClient};
 
 use std::collections::HashSet;
 use std::io;
 
+use bars_config::Icao;
 use bars_ipc::tcp::Channel;
 use bars_ipc::{Codec, Downstream, Upstream, tcp};
 
 use actix::io::{FramedWrite, WriteHandler};
 use actix::{
-	Actor, ActorContext, Addr, Arbiter, AsyncContext, Context, Handler, Message,
-	StreamHandler,
+	Actor, ActorContext, Addr, AsyncContext, Context, Handler, Message,
+	StreamHandler, SystemService,
 };
 use actix_broker::BrokerSubscribe;
 use tokio::net::TcpStream;
 use tokio::net::tcp::OwnedWriteHalf;
-use tracing::{instrument, trace, warn};
+use tracing::{trace, warn};
+
+pub type ClientId = u64;
+
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct ClientDownstream {
+	pub message: Downstream,
+}
+
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct ClientUpstream {
+	pub client: ClientId,
+	pub message: Upstream,
+}
 
 #[derive(Clone, Message)]
 #[rtype(result = "()")]
-pub struct UserMessage {
-	pub aerodrome: Option<String>,
+pub struct DispatchUserMessage {
+	pub aerodrome: Option<Icao>,
 	pub message: String,
 }
 
 pub struct Client {
-	init: ClientInit,
+	id: ClientId,
 	sink: ClientSink,
-	subscriptions: HashSet<String>,
-}
-
-#[derive(Debug)]
-pub struct ClientInit {
-	pub id: ClientId,
-	pub server: Addr<Server>,
+	subscriptions: HashSet<Icao>,
 }
 
 impl Client {
-	#[instrument(level = "debug")]
-	pub fn new_tcp(stream: TcpStream, init: ClientInit) -> Addr<Self> {
+	pub fn new_tcp(stream: TcpStream, id: ClientId) -> Addr<Self> {
 		let (rx, tx) = Channel::accept(stream).into_split();
 
-		Self::start_in_arbiter(&Arbiter::current(), move |ctx| {
+		Self::create(move |ctx| {
 			ctx.add_stream(rx.into_stream());
-			Self::new_inner(ClientSink::new_tcp(tx, ctx), init)
+			Self {
+				id,
+				sink: ClientSink::new_tcp(tx, ctx),
+				subscriptions: HashSet::new(),
+			}
 		})
-	}
-
-	fn new_inner(sink: ClientSink, init: ClientInit) -> Self {
-		Self {
-			init,
-			sink,
-			subscriptions: HashSet::new(),
-		}
 	}
 }
 
@@ -61,13 +64,15 @@ impl Actor for Client {
 	type Context = Context<Self>;
 
 	fn started(&mut self, ctx: &mut Self::Context) {
-		self.subscribe_system_async::<UserMessage>(ctx);
+		self.subscribe_system_async::<DispatchUserMessage>(ctx);
 	}
 
 	fn stopped(&mut self, _ctx: &mut Self::Context) {
+		let core = CoreService::from_registry();
+
 		for aerodrome in std::mem::take(&mut self.subscriptions) {
-			self.init.server.do_send(IpcUpstream {
-				client: self.init.id,
+			core.do_send(ClientUpstream {
+				client: self.id,
 				message: Upstream::Subscribe {
 					aerodrome,
 					subscribe: false,
@@ -75,14 +80,14 @@ impl Actor for Client {
 			});
 		}
 
-		self.init.server.do_send(RemoveClient { id: self.init.id });
+		core.do_send(RemoveClient { id: self.id });
 	}
 }
 
-impl Handler<UserMessage> for Client {
+impl Handler<DispatchUserMessage> for Client {
 	type Result = ();
 
-	fn handle(&mut self, message: UserMessage, _ctx: &mut Self::Context) {
+	fn handle(&mut self, message: DispatchUserMessage, _ctx: &mut Self::Context) {
 		if message
 			.aerodrome
 			.is_none_or(|aerodrome| self.subscriptions.contains(&aerodrome))
@@ -92,18 +97,25 @@ impl Handler<UserMessage> for Client {
 	}
 }
 
-impl Handler<IpcDownstream> for Client {
+impl Handler<ClientDownstream> for Client {
 	type Result = ();
 
-	fn handle(&mut self, message: IpcDownstream, _ctx: &mut Self::Context) {
-		if !matches!(
-			message,
-			IpcDownstream {
-				message: Downstream::OpenAerodrome { .. }
-					| Downstream::MapUpdate { .. }
-			}
-		) {
-			trace!("{} <- {:?}", self.init.id, message.message);
+	fn handle(&mut self, message: ClientDownstream, _ctx: &mut Self::Context) {
+		match &message.message {
+			Downstream::Aerodrome {
+				aerodrome,
+				config,
+				state,
+				updates,
+			} => trace!(
+				"{} <- Aerodrome {{ \
+					aerodrome: {aerodrome:?}, config: {}, state: {state:?}, updates: {} \
+				}}",
+				self.id,
+				if config.is_some() { "Some" } else { "None" },
+				updates.len(),
+			),
+			other => trace!("{} <- {other:?}", self.id),
 		}
 
 		self.sink.send(message.message);
@@ -114,7 +126,7 @@ impl StreamHandler<io::Result<Upstream>> for Client {
 	fn handle(&mut self, item: io::Result<Upstream>, ctx: &mut Self::Context) {
 		match item {
 			Ok(message) => {
-				trace!("{} -> {message:?}", self.init.id);
+				trace!("{} -> {message:?}", self.id);
 
 				if let Upstream::Subscribe {
 					aerodrome,
@@ -132,8 +144,8 @@ impl StreamHandler<io::Result<Upstream>> for Client {
 					}
 				}
 
-				self.init.server.do_send(IpcUpstream {
-					client: self.init.id,
+				CoreService::from_registry().do_send(ClientUpstream {
+					client: self.id,
 					message,
 				});
 			},
