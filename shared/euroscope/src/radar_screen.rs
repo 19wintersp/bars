@@ -1,9 +1,26 @@
+use std::cell::RefCell;
+use std::collections::HashSet;
 use std::ffi::{CStr, c_char};
 
 use crate::{
 	Area, Hdc, MouseButton, Plugin, Point, Position, RefreshPhase, SettingStore,
 	ffi,
 };
+
+thread_local! {
+	static RADAR_SCREENS: RefCell<HashSet<*mut RadarScreen>> =
+		RefCell::new(HashSet::new());
+}
+
+// EuroScope does not reliably destruct radar screens when closing the
+// application entirely, so we must do so ourselves when shutting down.
+pub(crate) fn exit() {
+	for screen in RADAR_SCREENS.take() {
+		unsafe {
+			RadarScreen::drop_ffi_mut(screen.cast());
+		}
+	}
+}
 
 #[derive(Debug)]
 #[repr(transparent)]
@@ -112,12 +129,14 @@ impl RadarScreen {
 	}
 
 	pub(crate) fn into_ffi_mut(self) -> *mut ffi::RadarScreen {
-		(Box::leak(Box::new(self)) as *mut Self).cast()
+		let ptr = Box::into_raw(Box::new(self));
+		RADAR_SCREENS.with_borrow_mut(|ptrs| ptrs.insert(ptr));
+		ptr.cast()
 	}
 
 	unsafe fn drop_ffi_mut(this: *mut ffi::RadarScreen) {
 		unsafe {
-			let _ = Box::from_raw(this);
+			let _ = Box::<Self>::from_raw(this.cast());
 		}
 	}
 }
@@ -208,6 +227,8 @@ extern_virtual!(
 
 extern_virtual!(
 	unsafe fn RadarScreen::OnAsrContentToBeClosed(this: *mut ffi::RadarScreen) {
+		RADAR_SCREENS.with_borrow_mut(|ptrs| ptrs.remove(&this.cast()));
+
 		unsafe {
 			RadarScreen::drop_ffi_mut(this);
 		}

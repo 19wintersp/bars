@@ -160,7 +160,7 @@ macro_rules! export {
 
 		#[unsafe(export_name = $crate::export_name!(exit))]
 		unsafe extern "C" fn _bars_euroscope_exit() {
-			unsafe { _BARS_EUROSCOPE.take() };
+			drop(unsafe { _BARS_EUROSCOPE.take() });
 			$( $exit(); )?
 		}
 	};
@@ -183,5 +183,11 @@ impl ExportContext {
 	pub fn register_plugin(&mut self, plugin: Plugin) {
 		self.plugin = Some(plugin);
 		unsafe { self.pointer.write(self.plugin.as_mut().unwrap()) };
+	}
+}
+
+impl Drop for ExportContext {
+	fn drop(&mut self) {
+		radar_screen::exit();
 	}
 }
