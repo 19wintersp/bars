@@ -89,7 +89,7 @@ impl Transform {
 				1.0,
 				scale * -bounds.min.y as f64 + offset_y,
 			],
-			scale: (1.0, 1.0),
+			scale: (scale, scale),
 		}
 	}
 
