@@ -194,9 +194,9 @@ impl Handler<ClientUpstream> for CoreService {
 				} else {
 					self.send(
 						msg.client,
-						Downstream::UserMessage(
-							"Please disconnect before re-authenticating.".into(),
-						),
+						Downstream::UserMessage {
+							message: "Please disconnect before re-authenticating.".into(),
+						},
 					);
 				}
 			},
@@ -269,9 +269,9 @@ impl Handler<ClientUpstream> for CoreService {
 				} else {
 					self.send(
 						msg.client,
-						Downstream::UserMessage(
-							"Cannot reload with active aerodromes.".into(),
-						),
+						Downstream::UserMessage {
+							message: "Cannot reload with active aerodromes.".into(),
+						},
 					);
 				}
 			},

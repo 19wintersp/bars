@@ -126,11 +126,16 @@ impl Context {
 							});
 						}
 					},
-					Downstream::UserMessage(message) => user_messages.push(message),
+					Downstream::UserMessage { message } => user_messages.push(message),
 					Downstream::Connection { target } => {
 						self.network_state = target;
 					},
-					Downstream::Aerodrome { aerodrome, config, state: capacity, updates } => {
+					Downstream::Aerodrome {
+						aerodrome,
+						config,
+						state: capacity,
+						updates,
+					} => {
 						if let Some(config) = config {
 							self.aerodromes.insert(aerodrome, Aerodrome::new(config));
 						}

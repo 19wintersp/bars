@@ -17,6 +17,10 @@ use serde::{Deserialize, Serialize};
 pub const PORT: u16 = 21314;
 pub const TCP_INIT_BYTE: u8 = 0xba;
 
+pub static WS_PROTOCOL_JSON: &str = "connect.euroscope.stopbars.com+json";
+pub static WS_PROTOCOL_POSTCARD: &str =
+	"connect.euroscope.stopbars.com+postcard";
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum Upstream {
 	Authenticate {
@@ -48,7 +52,9 @@ pub enum GraphAction {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum Downstream {
 	Hello,
-	UserMessage(String),
+	UserMessage {
+		message: String,
+	},
 	Connection {
 		target: ConnectionTarget,
 	},

@@ -1,9 +1,10 @@
 mod actor;
+mod route;
 mod settings;
 mod update;
 
-use crate::actor::client::{Client, ClientId};
-use crate::actor::service::core::{AddClient, CoreService};
+use crate::actor::service::core::CoreService;
+use crate::route::Router;
 use crate::update::Update;
 
 use std::net::Ipv4Addr;
@@ -11,8 +12,7 @@ use std::time::Duration;
 
 use actix::{Arbiter, System, SystemService};
 use anyhow::Result;
-use tokio::io::AsyncReadExt;
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpListener;
 use tracing::{debug, error, info, warn};
 
 #[tokio::main(flavor = "current_thread")]
@@ -21,6 +21,7 @@ async fn main() -> Result<()> {
 
 	let socket = bind().await?;
 	let update = tokio::spawn(Update::begin());
+	let router = Router::new();
 
 	tokio::task::spawn_blocking(move || {
 		let system = System::new();
@@ -28,18 +29,19 @@ async fn main() -> Result<()> {
 		CoreService::from_registry();
 
 		system.runtime().spawn(async move {
-			let mut id: ClientId = 0;
-
 			loop {
 				const TIMEOUT: Duration = Duration::from_secs(1);
 
 				match socket.accept().await {
 					Ok((stream, remote)) => {
 						debug!("accepted from {remote}");
-						id += 1;
+
+						let router = router.clone();
 						Arbiter::current().spawn(async move {
-							if let Err(err) = handle(stream, id).await {
+							if let Err(err) = router.handle(stream).await {
 								warn!("error handling {remote}: {err}");
+							} else {
+								debug!("closed {remote}");
 							}
 						});
 					},
@@ -93,18 +95,4 @@ async fn bind() -> Result<TcpListener> {
 	}
 
 	unreachable!();
-}
-
-async fn handle(mut stream: TcpStream, id: ClientId) -> Result<()> {
-	let init_byte = stream.read_u8().await?;
-	if init_byte == bars_ipc::TCP_INIT_BYTE {
-		CoreService::from_registry().do_send(AddClient {
-			id,
-			addr: Client::new_tcp(stream, id),
-		});
-	} else {
-		warn!("unhandled client with nonconformant initial byte {init_byte:02x}");
-	}
-
-	Ok(())
 }
