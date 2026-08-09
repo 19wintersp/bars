@@ -1,10 +1,11 @@
 use crate::actor::backend::{
-	ApplyAction, Backend, BackendHandle, DispatchUpdates, GetInitialMapUpdates, SetPilots,
+	ApplyAction, Backend, BackendHandle, DispatchUpdates, GetInitialMapUpdates,
+	SetPilots,
 };
 use crate::actor::client::{
 	Client, ClientDownstream, ClientId, ClientUpstream, DispatchUserMessage,
 };
-use crate::actor::service::config::{ConfigService, GetConfig};
+use crate::actor::service::config::{ClearCache, ConfigService, GetConfig};
 use crate::actor::service::settings::{SetApiToken, SettingsService};
 use crate::actor::service::target::{SetTarget, TargetService};
 
@@ -217,21 +218,23 @@ impl Handler<ClientUpstream> for CoreService {
 					if aerodrome.rc == 1 {
 						self.start_aerodrome_backend(icao);
 					} else if let Some(backend) = &aerodrome.backend {
-						ctx.spawn(backend.0.send(GetInitialMapUpdates).into_actor(self).map(
-							move |res, this, _ctx| {
-								if let Ok(updates) = res {
-									this.send(
-										msg.client,
-										Downstream::Aerodrome {
-											aerodrome: icao,
-											config: None,
-											state: None,
-											updates: updates,
-										},
-									)
-								}
-							},
-						));
+						ctx.spawn(
+							backend.0.send(GetInitialMapUpdates).into_actor(self).map(
+								move |res, this, _ctx| {
+									if let Ok(updates) = res {
+										this.send(
+											msg.client,
+											Downstream::Aerodrome {
+												aerodrome: icao,
+												config: None,
+												state: None,
+												updates: updates,
+											},
+										)
+									}
+								},
+							),
+						);
 					}
 
 					self.load_aerodrome_config(icao, ctx);
@@ -255,6 +258,22 @@ impl Handler<ClientUpstream> for CoreService {
 					.get(&aerodrome)
 					.and_then(|aerodrome| aerodrome.backend.as_ref())
 					.map(|backend| backend.0.do_send(ApplyAction(action)));
+			},
+			Upstream::Reload => {
+				if self.aerodromes.values().all(|aerodrome| aerodrome.rc == 0) {
+					self
+						.aerodromes
+						.values_mut()
+						.for_each(|aerodrome| aerodrome.config = None);
+					ConfigService::from_registry().do_send(ClearCache);
+				} else {
+					self.send(
+						msg.client,
+						Downstream::UserMessage(
+							"Cannot reload with active aerodromes.".into(),
+						),
+					);
+				}
 			},
 		}
 	}

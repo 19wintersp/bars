@@ -33,6 +33,7 @@ pub enum Upstream {
 		aerodrome: Icao,
 		action: GraphAction,
 	},
+	Reload,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

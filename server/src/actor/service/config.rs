@@ -15,6 +15,10 @@ use bytes::{Buf, Bytes};
 use tracing::{info, warn};
 
 #[derive(Message)]
+#[rtype(result = "()")]
+pub struct ClearCache;
+
+#[derive(Message)]
 #[rtype(result = "Result<Arc<AerodromeConfig>>")]
 pub struct GetConfig {
 	pub aerodrome: Icao,
@@ -71,6 +75,14 @@ impl Actor for ConfigService {
 impl Supervised for ConfigService {}
 
 impl SystemService for ConfigService {}
+
+impl Handler<ClearCache> for ConfigService {
+	type Result = ();
+
+	fn handle(&mut self, _: ClearCache, _: &mut Self::Context) {
+		self.cache.clear();
+	}
+}
 
 impl Handler<GetConfig> for ConfigService {
 	type Result = ResponseActFuture<Self, Result<Arc<AerodromeConfig>>>;

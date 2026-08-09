@@ -46,6 +46,10 @@ impl Context {
 		});
 	}
 
+	pub fn reload(&self) {
+		self.client.send(Upstream::Reload);
+	}
+
 	pub fn connect_network(&self, capacity: ConnectionTarget) {
 		self.client.send(Upstream::Connect { target: capacity });
 	}

@@ -105,6 +105,9 @@ impl PluginHandler for Plugin {
 				Some("start") => {
 					self.context.borrow_mut().connect();
 				},
+				Some("reload") => {
+					self.context.borrow().reload();
+				},
 				Some(other) => ctx.display_basic_message(&format!(
 					"Error: unrecognised command: {other:?}"
 				)),
