@@ -1,0 +1,41 @@
+[package]
+name = "bars-plugin-server"
+authors = ["Patrick Winters <19wintersp@gmail.com>"]
+license = "GPL-3.0-or-later"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[dependencies]
+bars-config.workspace = true
+bars-graph = { workspace = true, features = ["serde"] }
+bars-ipc = { workspace = true, features = ["tcp"] }
+bars-platform.workspace = true
+bars-protocol.workspace = true
+bars-tracing.workspace = true
+bars-update = { workspace = true, features = ["download"] }
+
+actix.workspace = true
+actix-broker.workspace = true
+anyhow.workspace = true
+async-tungstenite = { workspace = true, features = ["tokio-native-tls"] }
+axum.workspace = true
+bytes.workspace = true
+futures.workspace = true
+http.workspace = true
+hyper = { workspace = true, features = ["http1", "server"] }
+hyper-util = { workspace = true, features = ["tokio"] }
+ouroboros.workspace = true
+postcard = { workspace = true, features = ["use-std"] }
+rand.workspace = true
+reqwest = { workspace = true, features = ["json", "native-tls"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+tokio = {
+	workspace = true,
+	features = ["macros", "net", "rt", "rt-multi-thread", "sync", "time"],
+}
+toml.workspace = true
+tower.workspace = true
+tracing.workspace = true

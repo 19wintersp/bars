@@ -1,0 +1,16 @@
+[package]
+name = "bars-euroscope"
+version = "0.1.0"
+authors = ["Patrick Winters <19wintersp@gmail.com>"]
+edition = "2024"
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+links = "EuroScopePlugInDll"
+
+[dependencies]
+
+[build-dependencies]
+bindgen.workspace = true
+cc.workspace = true
+syn = { workspace = true, features = ["visit"] }

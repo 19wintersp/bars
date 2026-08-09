@@ -1,0 +1,16 @@
+[package]
+name = "bars-tracing"
+version = "0.1.0"
+authors = ["Patrick Winters <19wintersp@gmail.com>"]
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[dependencies]
+bars-platform.workspace = true
+
+anyhow.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["chrono"] }

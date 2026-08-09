@@ -5,8 +5,12 @@ use std::collections::HashMap;
 use bincode::error::{DecodeError, EncodeError};
 use bincode::{Decode, Encode};
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 /// A configuration defining an aerodrome.
 #[derive(Clone, Debug, Decode, Encode)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct Aerodrome {
 	pub nodes: Vec<Node>,
 	pub blocks: Vec<Block>,
@@ -33,6 +37,7 @@ impl Aerodrome {
 }
 
 #[derive(Clone, Debug, Decode, Encode)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct Node {
 	pub id: String,
 
@@ -41,6 +46,7 @@ pub struct Node {
 }
 
 #[derive(Clone, Debug, Decode, Encode)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct Block {
 	pub id: String,
 
@@ -53,6 +59,7 @@ pub struct Block {
 #[derive(
 	Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Decode, Encode,
 )]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct BlockRoute {
 	pub from: BlockNode,
 	pub to: BlockNode,
@@ -61,12 +68,14 @@ pub struct BlockRoute {
 #[derive(
 	Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Decode, Encode,
 )]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct BlockNode {
 	pub node: Ref<Node>,
 	pub child: usize,
 }
 
 #[derive(Clone, Debug, Decode, Encode)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct Bind {
 	pub id: String,
 
@@ -74,6 +83,7 @@ pub struct Bind {
 }
 
 #[derive(Clone, Debug, Decode, Encode)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct Profile {
 	pub id: String,
 	pub name: String,
@@ -84,6 +94,7 @@ pub struct Profile {
 }
 
 #[derive(Clone, Debug, Decode, Encode)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub enum NodeCondition {
 	Fixed {
 		state: State,
@@ -98,12 +109,14 @@ pub enum NodeCondition {
 }
 
 #[derive(Clone, Debug, Decode, Encode)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub enum BlockCondition {
 	Fixed { state: BlockState },
 	Router { reset: ResetCondition },
 }
 
 #[derive(Clone, Debug, Decode, Encode)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub enum BindCondition {
 	Fixed {
 		state: State,
@@ -116,6 +129,7 @@ pub enum BindCondition {
 
 /// An element in the boolean expression defining the status of a bind.
 #[derive(Clone, Debug, Decode, Encode)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub enum BindDependency {
 	/// A node reference.
 	///
@@ -130,6 +144,7 @@ pub enum BindDependency {
 
 /// A boolean expression in disjunctive normal form.
 #[derive(Clone, Debug, Decode, Encode)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct BindExpression {
 	pub disjunction: Vec<BindConjunction>,
 }
@@ -144,6 +159,7 @@ impl BindExpression {
 }
 
 #[derive(Clone, Debug, Decode, Encode)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct BindConjunction {
 	pub positive: Vec<BindDependency>,
 	pub negative: Vec<BindDependency>,
@@ -159,6 +175,7 @@ impl BindConjunction {
 pub type ProfileFilter = Vec<Ref<Profile>>;
 
 #[derive(Clone, Debug, Decode, Encode)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct ResetCondition {
 	/// A timeout given in seconds; zero indicates no timeout.
 	pub timeout: u8,
@@ -170,6 +187,7 @@ pub struct ResetCondition {
 #[derive(
 	Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Decode, Encode,
 )]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub enum ResetTarget {
 	Node(Ref<Node>),
 	Block(Ref<Block>),
@@ -178,6 +196,7 @@ pub enum ResetTarget {
 #[derive(
 	Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Decode, Encode,
 )]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 #[repr(u8)]
 pub enum State {
 	Off,
@@ -187,6 +206,7 @@ pub enum State {
 #[derive(
 	Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Decode, Encode,
 )]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub enum BlockState {
 	Clear,
 	Relax,
@@ -194,6 +214,7 @@ pub enum BlockState {
 }
 
 #[derive(Clone, Debug, Decode, Encode)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct Preset {
 	pub id: String,
 	/// A human-readable name for the preset.
@@ -208,6 +229,7 @@ pub struct Preset {
 }
 
 #[derive(Clone, Debug, Decode, Encode)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct Element {
 	pub name: String,
 	pub points: Vec<Geo>,

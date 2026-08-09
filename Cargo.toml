@@ -1,38 +1,75 @@
 [workspace]
 resolver = "2"
 members = [
-	"client/",
+	"loader/",
+	"plugin/",
+	"server/",
+
 	"shared/config/",
+	"shared/euroscope/",
+	"shared/graph/",
+	"shared/graphics/",
+	"shared/ipc/",
+	"shared/platform/",
 	"shared/protocol/",
+	"shared/tracing/",
+	"shared/update/",
+
 	"tool/dump-config/",
 	"tool/server/",
 ]
 
 [workspace.package]
-edition = "2021"
+edition = "2024"
 license = "MIT OR Apache-2.0"
 publish = false
 repository = "https://github.com/19wintersp/bars"
+version = "0.1.0"
 
 [workspace.dependencies]
 bars-config = { path = "shared/config/" }
+bars-euroscope = { path = "shared/euroscope/" }
+bars-graph = { path = "shared/graph/" }
+bars-graphics = { path = "shared/graphics/" }
+bars-ipc = { path = "shared/ipc/" }
+bars-platform = { path = "shared/platform/" }
 bars-protocol = { path = "shared/protocol/" }
+bars-tracing = { path = "shared/tracing/" }
+bars-update = { path = "shared/update/" }
+
+actix = "0.13"
+actix-broker = "0.4"
 anyhow = "1.0"
-bincode = "2.0"
+async-tungstenite = "0.35"
+bincode = "=2.0.1"
+bindgen = "0.72"
+bytes = "1.12"
 cbindgen = "0.28"
+cc = "=1.2.26"
+cxx = "1.0.194"
+cxx-build = "1.0"
 chrono = "0.4"
 clap = "4.5"
 flate2 = "1.0"
 futures = "0.3"
+http = "1.5"
 hyper = "1.6"
 hyper-util = "0.1"
 kml = "0.8"
 kurbo = "0.11"
-reqwest = "0.12"
+libloading = "0.9"
+lzma-rust2 = { version = "0.18", default-features = false }
+ouroboros = "0.18"
+postcard = "1.1"
+rand = "0.10"
+reqwest = { version = "0.12", default-features = false }
 serde = "1.0"
 serde_json = "1.0"
+syn = "2.0"
+tar = "0.4"
 tokio = "1.43"
 tokio-tungstenite = "0.27"
+tokio-util = "0.7"
 toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = "0.3"
