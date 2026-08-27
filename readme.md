@@ -1,7 +1,44 @@
-# BARS for EuroScope
+<p align="center">
+  <p align="center">
+   <img width="150" height="150" src="https://stopbars.com/favicon.png" alt="Logo">
+  </p>
+	<h1 align="center"><b>stopbars/EuroScope-Plugin</b></h1>
+	<p align="center">
+    <br />
+		BARS EuroScope Plugin enables controllers to manage and update airport lighting that directly reflects into simulators, synchronizing lighting state between controllers and pilots, directly through the EuroScope client.
+    <br />
+    <br />
+    <a href="https://stopbars.com"><strong>stopbars.com »</strong></a>
+    <br />
+  </p>
+</p>
 
-**The advanced BARS client for EuroScope.**
+<p align="center">
+  <br />
+  <a href="https://stopbars.com/discord" target="_blank" rel="noopener noreferrer">
+	<img src="https://img.shields.io/badge/Discord-Join%20Server-5865F2?logo=discord&logoColor=white" alt="Discord">
+  </a>
+  <a href="https://opencollective.com/stopbars">
+    <img src="https://img.shields.io/static/v1?label=&message=Open%20Collective&color=297EF2&logo=opencollective&logoColor=white" />
+  </a>
+	<a href="https://www.apache.org/licenses/LICENSE-2.0">
+    <img src="https://img.shields.io/static/v1?label=Licence&message=Apache-2.0&color=000" />
+  </a>
+  <a href="https://opensource.org/license/mit">
+    <img src="https://img.shields.io/static/v1?label=Licence&message=MIT&color=000" />
+  </a>
+	  <a href="https://docs.stopbars.com/euroscope" target="_blank" rel="noopener noreferrer">
+    <img src="https://img.shields.io/badge/Documentation-e81919.svg" alt="Documentation">
+  </a>
+  <br />
+</p>
 
-[BARS](https://stopbars.com/) is a system allowing controller-defined scenery
-elements for pilots connecting to the VATSIM network. This is the standard
-client with which controllers using EuroScope use the BARS network.
+## Contributing
+
+We encourage and appreciate contributions from the community! To get started, please review our [CONTRIBUTING.md](CONTRIBUTING.md) guide, which covers how to set up your development environment, code style guidelines and best practices, instructions for submitting pull requests, and testing and verification procedures.
+
+Your contributions directly support the ongoing development and improvement of BARS. By getting involved, you help us build a more robust, and feature-rich product that benefits the entire flight sim community. All contributors are acknowledged on our [credits page](https://stopbars.com/credits).
+
+## Disclaimer
+
+BARS is an **independent third-party** software project. **We are not affiliated** with, **endorsed by**, or **connected to** VATSIM, vatSys, EuroScope, Microsoft Flight Simulator, or any other simulation, controller client supported by our software.
